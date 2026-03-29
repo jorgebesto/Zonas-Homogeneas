@@ -415,7 +415,29 @@ function renderPanelContent() {
 // ═══════════════════════════════════════════════════
 //  PHOTOS
 // ═══════════════════════════════════════════════════
-function triggerPhoto(corner) { pendingCorner=corner; document.getElementById('photo-input').click(); }
+function triggerPhoto(corner) {
+  pendingCorner = corner;
+  const modal = document.getElementById('photo-source-modal');
+  modal.style.display = 'flex';
+  // pequeña animacion de entrada
+  const inner = modal.querySelector('div');
+  inner.style.transform = 'translateY(100%)';
+  inner.style.transition = 'transform 0.25s ease';
+  requestAnimationFrame(() => requestAnimationFrame(() => { inner.style.transform = 'translateY(0)'; }));
+}
+
+function choosePhotoSource(source) {
+  closePhotoModal();
+  const inputId = source === 'camera' ? 'photo-input-camera' : 'photo-input-gallery';
+  document.getElementById(inputId).click();
+}
+
+function closePhotoModal() {
+  const modal = document.getElementById('photo-source-modal');
+  const inner = modal.querySelector('div');
+  inner.style.transform = 'translateY(100%)';
+  setTimeout(() => { modal.style.display = 'none'; inner.style.transform = ''; }, 220);
+}
 
 function handlePhotoFile(event) {
   const file=event.target.files[0]; if(!file||!pendingCorner) return;
