@@ -344,8 +344,28 @@ body { background:var(--bg); color:var(--text); font-family:"Segoe UI",system-ui
   </div>
 </div>
 
-<!-- file input for photos -->
-<input type="file" id="photo-input" accept="image/*" style="display:none" onchange="handlePhotoFile(event)">
+<!-- file inputs for photos -->
+<input type="file" id="photo-input-gallery" accept="image/*" style="display:none" onchange="handlePhotoFile(event)">
+<input type="file" id="photo-input-camera" accept="image/*" capture="environment" style="display:none" onchange="handlePhotoFile(event)">
+
+<!-- Modal: Camara o Galeria -->
+<div id="photo-source-modal" onclick="closePhotoModal()" style="display:none;position:fixed;inset:0;z-index:8000;background:rgba(0,0,0,0.7);align-items:flex-end;justify-content:center;">
+  <div onclick="event.stopPropagation()" style="background:#1e2333;border-radius:18px 18px 0 0;padding:1.4rem 1.2rem 2rem;width:100%;max-width:480px;border-top:2px solid #2a2f44;">
+    <div style="width:36px;height:4px;background:#2a2f44;border-radius:2px;margin:0 auto 1.2rem;"></div>
+    <p style="font-family:'Courier New',monospace;font-size:0.6rem;color:#7a7f94;text-transform:uppercase;letter-spacing:0.12em;text-align:center;margin-bottom:1rem;">Como deseas agregar la foto?</p>
+    <div style="display:flex;gap:0.8rem;">
+      <button onclick="choosePhotoSource('camera')" style="flex:1;padding:1rem 0.5rem;border-radius:12px;border:1px solid #2a2f44;background:#181c27;color:#e8e4dc;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:0.5rem;font-family:'Courier New',monospace;font-size:0.6rem;text-transform:uppercase;letter-spacing:0.08em;">
+        <span style="font-size:2rem;">&#128247;</span>
+        Tomar foto
+      </button>
+      <button onclick="choosePhotoSource('gallery')" style="flex:1;padding:1rem 0.5rem;border-radius:12px;border:1px solid #2a2f44;background:#181c27;color:#e8e4dc;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:0.5rem;font-family:'Courier New',monospace;font-size:0.6rem;text-transform:uppercase;letter-spacing:0.08em;">
+        <span style="font-size:2rem;">&#128444;</span>
+        Galeria
+      </button>
+    </div>
+    <button onclick="closePhotoModal()" style="width:100%;margin-top:0.8rem;padding:0.7rem;border-radius:10px;border:1px solid #2a2f44;background:transparent;color:#7a7f94;cursor:pointer;font-family:'Courier New',monospace;font-size:0.58rem;text-transform:uppercase;letter-spacing:0.08em;">Cancelar</button>
+  </div>
+</div>
 
 <!-- Lightbox -->
 <div id="lightbox" onclick="closeLightbox()">
