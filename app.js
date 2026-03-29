@@ -263,6 +263,71 @@ function processGeoJSON(geojson, fromProj) {
   setTimeout(() => launchApp(), 700);
 }
 
+
+// ═══════════════════════════════════════════════════
+//  CORNER MARKERS  (puntos por esquina sobre el mapa)
+// ═══════════════════════════════════════════════════
+const photoMarkers = {}; // photoMarkers[featureId][corner] = L.Marker
+
+const CORNER_STYLES = {
+  'top-left':     { color:'#60c0ff', offset:[0.15, 0.15] },
+  'top-right':    { color:'#f5c842', offset:[0.15, 0.85] },
+  'bottom-left':  { color:'#e05c3a', offset:[0.85, 0.15] },
+  'bottom-right': { color:'#3ab87a', offset:[0.85, 0.85] }
+};
+
+function cornerLatLng(featureId, corner) {
+  const f = features.find(x => x.id === featureId);
+  if (!f) return null;
+  const ring = f.rings[0];
+  const lats = ring.map(p => p[0]);
+  const lngs = ring.map(p => p[1]);
+  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+  const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+  const off = CORNER_STYLES[corner].offset;
+  return [
+    minLat + (maxLat - minLat) * off[0],
+    minLng + (maxLng - minLng) * off[1]
+  ];
+}
+
+function makeCornerIcon(corner) {
+  const color = CORNER_STYLES[corner].color;
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">'
+    + '<circle cx="9" cy="9" r="7" fill="' + color + '" stroke="#0f1117" stroke-width="2.5"/>'
+    + '<circle cx="9" cy="9" r="2.5" fill="#0f1117" opacity="0.6"/>'
+    + '</svg>';
+  return L.divIcon({ html: svg, className: '', iconSize: [18, 18], iconAnchor: [9, 9] });
+}
+
+function syncCornerMarkers(featureId) {
+  if (!map) return;
+  const p = photos[featureId] || {};
+  if (!photoMarkers[featureId]) photoMarkers[featureId] = {};
+
+  CORNERS.forEach(corner => {
+    const arr = p[corner] || [];
+    const existing = photoMarkers[featureId][corner];
+
+    if (arr.length > 0 && !existing) {
+      const ll = cornerLatLng(featureId, corner);
+      if (!ll) return;
+      const label = CLABELS[corner] + ' — ' + arr.length + ' foto' + (arr.length > 1 ? 's' : '');
+      const marker = L.marker(ll, { icon: makeCornerIcon(corner), interactive: true, zIndexOffset: 1000 });
+      marker.bindTooltip(label, { direction: 'top', className: 'lf-tt' });
+      marker.on('click', () => selectManzana(featureId));
+      marker.addTo(map);
+      photoMarkers[featureId][corner] = marker;
+    } else if (arr.length > 0 && existing) {
+      const label = CLABELS[corner] + ' — ' + arr.length + ' foto' + (arr.length > 1 ? 's' : '');
+      existing.setTooltipContent(label);
+    } else if (arr.length === 0 && existing) {
+      map.removeLayer(existing);
+      delete photoMarkers[featureId][corner];
+    }
+  });
+}
+
 // ═══════════════════════════════════════════════════
 //  APP LAUNCH
 // ═══════════════════════════════════════════════════
@@ -410,6 +475,7 @@ function renderPanelContent() {
   document.getElementById('btn-dl').style.display = total>0?'flex':'none';
   updatePolygonStyle(id);
   updateProgress();
+  syncCornerMarkers(id);
 }
 
 // ═══════════════════════════════════════════════════
@@ -779,11 +845,12 @@ async function exportHTML() {
       for (const {corner, idx, ph} of allPhotos) {
         const thumb = await toThumb(ph.dataUrl);
         const label = CLABELS[corner];
-        photosHtml += `
-          <div style="break-inside:avoid;display:inline-block;width:calc(50% - 8px);margin:4px;vertical-align:top">
-            <img src="${thumb}" style="width:100%;border-radius:6px;display:block;border:1px solid #2a2f44" alt="${label}">
-            <div style="font-size:10px;color:#7a7f94;text-align:center;margin-top:4px;font-family:monospace;text-transform:uppercase;letter-spacing:0.08em">${label} · Foto ${idx+1}</div>
-          </div>`;
+        photosHtml += '<div style="break-inside:avoid;display:inline-block;width:calc(50% - 8px);margin:4px;vertical-align:top">'
+          + '<img src="' + thumb + '" data-full="' + thumb + '" data-label="Manzana ' + f.num + ' \u2014 ' + label + ' \xb7 Foto ' + (idx+1) + '"'
+          + ' onclick="openReportLightbox(this)"'
+          + ' style="width:100%;border-radius:6px;display:block;border:1px solid #2a2f44;cursor:zoom-in" alt="' + label + '">'
+          + '<div style="font-size:10px;color:#7a7f94;text-align:center;margin-top:4px;font-family:monospace;text-transform:uppercase;letter-spacing:0.08em">' + label + ' \xb7 Foto ' + (idx+1) + '</div>'
+          + '</div>';
       }
 
       const coordStr = f.centroid ? `${f.centroid[0].toFixed(5)}, ${f.centroid[1].toFixed(5)}` : '';
@@ -818,6 +885,28 @@ async function exportHTML() {
       finished: !!finished[f.id]
     })));
 
+    // Serialize corner photo counts for markers in report map
+    const markersJson = JSON.stringify(features.map(f => {
+      const p = photos[f.id] || {};
+      const ring = f.rings[0];
+      const lats = ring.map(pt => pt[0]);
+      const lngs = ring.map(pt => pt[1]);
+      const mnLat = Math.min(...lats), mxLat = Math.max(...lats);
+      const mnLng = Math.min(...lngs), mxLng = Math.max(...lngs);
+      const corners = {};
+      CORNERS.forEach(c => {
+        const off = { 'top-left':[0.15,0.15],'top-right':[0.15,0.85],'bottom-left':[0.85,0.15],'bottom-right':[0.85,0.85] }[c];
+        corners[c] = {
+          count: (p[c]||[]).length,
+          lat: mnLat + (mxLat - mnLat) * off[0],
+          lng: mnLng + (mxLng - mnLng) * off[1],
+          color: { 'top-left':'#60c0ff','top-right':'#f5c842','bottom-left':'#e05c3a','bottom-right':'#3ab87a' }[c],
+          label: { 'top-left':'\u2196 Sup Izq','top-right':'\u2197 Sup Der','bottom-left':'\u2199 Inf Izq','bottom-right':'\u2198 Inf Der' }[c]
+        };
+      });
+      return { num: f.num, corners };
+    }));
+
     const cntFotos = features.filter(f=>Object.values(photos[f.id]||{}).some(a=>a.length>0)).length;
     const mapScript = [
       '(function(){',
@@ -826,6 +915,7 @@ async function exportHTML() {
       '    attribution:"\u00a9 OpenStreetMap \u00a9 CARTO",maxZoom:19',
       '  }).addTo(map);',
       '  var features = ' + featuresJson + ';',
+      '  var markers  = ' + markersJson + ';',
       '  var allLatLngs = [];',
       '  features.forEach(function(f){',
       '    f.rings.forEach(function(ring){',
@@ -835,8 +925,35 @@ async function exportHTML() {
       '      allLatLngs = allLatLngs.concat(ring);',
       '    });',
       '  });',
+      '  // Draw corner photo markers',
+      '  markers.forEach(function(mz){',
+      '    Object.keys(mz.corners).forEach(function(c){',
+      '      var cd = mz.corners[c];',
+      '      if(cd.count === 0) return;',
+      '      var svg = \'<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">\'',
+      '        + \'<circle cx="9" cy="9" r="7" fill="\'+cd.color+\'" stroke="#0f1117" stroke-width="2.5"/>\'',
+      '        + \'<circle cx="9" cy="9" r="2.5" fill="#0f1117" opacity="0.6"/></svg>\';',
+      '      var icon = L.divIcon({html:svg,className:"",iconSize:[18,18],iconAnchor:[9,9]});',
+      '      var label = "Manzana "+mz.num+" \u2014 "+cd.label+" \u00b7 "+cd.count+" foto"+(cd.count>1?"s":"");',
+      '      L.marker([cd.lat,cd.lng],{icon:icon}).bindTooltip(label,{direction:"top"}).addTo(map);',
+      '    });',
+      '  });',
       '  if(allLatLngs.length) map.fitBounds(L.latLngBounds(allLatLngs),{padding:[20,20]});',
-      '})();'
+      '})();',
+      '',
+      '// Report lightbox',
+      'function openReportLightbox(img){',
+      '  var lb = document.getElementById("r-lightbox");',
+      '  document.getElementById("r-lb-img").src = img.dataset.full || img.src;',
+      '  document.getElementById("r-lb-cap").textContent = img.dataset.label || "";',
+      '  lb.style.display = "flex";',
+      '  document.body.style.overflow = "hidden";',
+      '}',
+      'function closeReportLightbox(){',
+      '  document.getElementById("r-lightbox").style.display = "none";',
+      '  document.body.style.overflow = "";',
+      '}',
+      'document.addEventListener("keydown",function(e){ if(e.key==="Escape") closeReportLightbox(); });'
     ].join('\n');
 
     const parts = [];
@@ -860,7 +977,17 @@ async function exportHTML() {
     parts.push('#report-map{width:100%;height:320px;border-radius:10px;border:1px solid #2a2f44;margin-bottom:24px}');
     parts.push('.section-title{font-family:monospace;font-size:11px;color:#7a7f94;text-transform:uppercase;letter-spacing:0.12em;margin-bottom:12px;padding-bottom:6px;border-bottom:1px solid #2a2f44}');
     parts.push('@media print{body{background:#fff;color:#111}.stat{background:#f5f5f5;border-color:#ddd}#report-map{display:none}}');
+    parts.push('#r-lightbox{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.95);z-index:9000;align-items:center;justify-content:center;flex-direction:column;gap:12px;padding:16px;}');
+    parts.push('#r-lb-img{max-width:92vw;max-height:84vh;border-radius:10px;border:1px solid #2a2f44;object-fit:contain;box-shadow:0 8px 40px rgba(0,0,0,0.8);}');
+    parts.push('#r-lb-cap{font-family:monospace;font-size:11px;color:#7a7f94;text-transform:uppercase;letter-spacing:0.1em;text-align:center;}');
+    parts.push('#r-lb-close{position:fixed;top:16px;right:16px;width:38px;height:38px;border-radius:50%;background:#1e2333;border:1px solid #2a2f44;color:#e8e4dc;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;}');
+    parts.push('#r-lb-close:hover{background:#2a2f44;}');
     parts.push('</style></head><body>');
+    parts.push('<div id="r-lightbox" onclick="if(event.target===this)closeReportLightbox()">');
+    parts.push('<button id="r-lb-close" onclick="closeReportLightbox()">&#x2715;</button>');
+    parts.push('<img id="r-lb-img" src="" alt="">');
+    parts.push('<p id="r-lb-cap"></p>');
+    parts.push('</div>');
     parts.push('<h1>Registro <span>Catastral</span></h1>');
     parts.push('<p class="meta">Generado el ' + fecha + ' &nbsp;&middot;&nbsp; ' + features.length + ' manzanas totales</p>');
     parts.push('<div class="stats">');
