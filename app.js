@@ -439,26 +439,124 @@ function closePhotoModal() {
   setTimeout(() => { modal.style.display = 'none'; inner.style.transform = ''; }, 220);
 }
 
+// ═══════════════════════════════════════════════════
+//  MEMORY MANAGEMENT
+// ═══════════════════════════════════════════════════
+const MEM_LIMIT_MB  = 400;  // límite total recomendado
+const MEM_WARN_PCT  = 0.70; // 70% → advertencia amarilla
+const MEM_BLOCK_PCT = 0.90; // 90% → bloqueo rojo
+
+function calcMemoryMB() {
+  let bytes = 0;
+  Object.values(photos).forEach(corners => {
+    Object.values(corners).forEach(arr => {
+      arr.forEach(ph => { bytes += ph.dataUrl.length * 0.75; }); // base64 → bytes reales
+    });
+  });
+  return bytes / (1024 * 1024);
+}
+
+function updateMemoryUI() {
+  const mb     = calcMemoryMB();
+  const pct    = Math.min(mb / MEM_LIMIT_MB, 1);
+  const fill   = document.getElementById('mem-fill');
+  const count  = document.getElementById('mem-count');
+  const wrap   = document.getElementById('mem-wrap');
+  if (!fill) return;
+
+  wrap.style.display = 'flex';
+  fill.style.width   = (pct * 100).toFixed(1) + '%';
+  count.textContent  = mb.toFixed(1) + ' MB / ' + MEM_LIMIT_MB + ' MB';
+
+  fill.className  = 'mem-fill';
+  count.className = 'mem-count';
+  if (pct >= MEM_BLOCK_PCT) {
+    fill.classList.add('danger');
+    count.classList.add('danger');
+  } else if (pct >= MEM_WARN_PCT) {
+    fill.classList.add('warn');
+    count.classList.add('warn');
+  }
+}
+
+// Comprimir imagen a máx 1200px, calidad 72%
+function compressImage(dataUrl) {
+  return new Promise(res => {
+    const img = new Image();
+    img.onload = () => {
+      const MAX = 1200;
+      const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width  = Math.round(img.width  * scale);
+      c.height = Math.round(img.height * scale);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      res(c.toDataURL('image/jpeg', 0.72));
+    };
+    img.onerror = () => res(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
 function handlePhotoFile(event) {
-  const file=event.target.files[0]; if(!file||!pendingCorner) return;
-  event.target.value='';
-  const corner=pendingCorner; pendingCorner=null;
-  const reader=new FileReader();
-  reader.onload=(e)=>{
-    const id=currentId;
-    if(!photos[id]) photos[id]={};
-    if(!photos[id][corner]) photos[id][corner]=[];
-    if(photos[id][corner].length>=2) return;
-    photos[id][corner].push({name:file.name,dataUrl:e.target.result});
+  const file = event.target.files[0];
+  if (!file || !pendingCorner) return;
+  event.target.value = '';
+  const corner = pendingCorner; pendingCorner = null;
+
+  // Verificar si ya estamos bloqueados por memoria
+  const mb = calcMemoryMB();
+  if (mb / MEM_LIMIT_MB >= MEM_BLOCK_PCT) {
+    alert(
+      '⚠️ Memoria casi llena (' + mb.toFixed(1) + ' MB / ' + MEM_LIMIT_MB + ' MB)\n\n' +
+      'No se pueden agregar más fotos sin riesgo de falla.\n' +
+      'Genera el reporte HTML ahora para liberar memoria\n' +
+      'y continúa con un nuevo archivo.'
+    );
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    const id = currentId;
+    if (!photos[id]) photos[id] = {};
+    if (!photos[id][corner]) photos[id][corner] = [];
+    if (photos[id][corner].length >= 2) return;
+
+    // Comprimir antes de guardar
+    const compressed = await compressImage(e.target.result);
+    photos[id][corner].push({ name: file.name, dataUrl: compressed });
     renderPanelContent();
+    updateMemoryUI();
+
+    // Advertencia al llegar al 70%
+    const newMb  = calcMemoryMB();
+    const newPct = newMb / MEM_LIMIT_MB;
+    if (newPct >= MEM_WARN_PCT && newPct < MEM_BLOCK_PCT) {
+      const totalFotos = Object.values(photos).reduce((s, c) =>
+        s + Object.values(c).reduce((ss, a) => ss + a.length, 0), 0);
+      // Mostrar solo una vez por cada 10% superado
+      const threshold = Math.floor(newPct * 10);
+      if (threshold !== handlePhotoFile._lastWarn) {
+        handlePhotoFile._lastWarn = threshold;
+        setTimeout(() => {
+          alert(
+            '⚠️ Memoria al ' + Math.round(newPct * 100) + '%\n\n' +
+            '📊 ' + totalFotos + ' fotos · ' + newMb.toFixed(1) + ' MB usados de ' + MEM_LIMIT_MB + ' MB\n\n' +
+            'Recomendación: exporta el reporte HTML pronto\npara evitar pérdida de datos.'
+          );
+        }, 300);
+      }
+    }
   };
   reader.readAsDataURL(file);
 }
+handlePhotoFile._lastWarn = -1;
 
 function removePhoto(corner,idx) {
   const p=photos[currentId];
   if(p&&p[corner]){p[corner].splice(idx,1); if(!p[corner].length) delete p[corner];}
   renderPanelContent();
+  updateMemoryUI();
 }
 function clearManzana() {
   if(!currentId&&currentId!==0) return;
@@ -467,6 +565,7 @@ function clearManzana() {
   if(tot>0&&!confirm('¿Eliminar todas las fotos de Manzana '+features.find(f=>f.id===currentId)?.num+'?')) return;
   photos[currentId]={}; finished[currentId]=false;
   renderPanelContent();
+  updateMemoryUI();
 }
 function finishManzana()   { finished[currentId]=true;  renderPanelContent(); }
 function unfinishManzana() { finished[currentId]=false; renderPanelContent(); }
