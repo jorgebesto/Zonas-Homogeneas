@@ -344,8 +344,99 @@ function launchApp() {
 }
 
 // ═══════════════════════════════════════════════════
-//  PANEL
+//  GEOLOCATION
 // ═══════════════════════════════════════════════════
+let locationMarker   = null;
+let locationCircle   = null;
+let locationWatchId  = null;
+let locationActive   = false;
+
+function toggleLocation() {
+  if (locationActive) {
+    stopLocation();
+  } else {
+    startLocation();
+  }
+}
+
+function startLocation() {
+  if (!navigator.geolocation) {
+    alert('Tu navegador no soporta geolocalización.');
+    return;
+  }
+  const btn = document.getElementById('btn-locate');
+  btn.classList.add('loading');
+  btn.textContent = '⏳';
+
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      locationActive = true;
+      btn.classList.remove('loading');
+      btn.classList.add('active');
+      btn.textContent = '🔵';
+
+      updateLocationMarker(pos);
+
+      // Centrar el mapa en la ubicación
+      map.setView([pos.coords.latitude, pos.coords.longitude], Math.max(map.getZoom(), 17));
+
+      // Seguimiento continuo
+      locationWatchId = navigator.geolocation.watchPosition(
+        updateLocationMarker,
+        (err) => console.warn('GPS error:', err.message),
+        { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
+      );
+    },
+    (err) => {
+      btn.classList.remove('loading');
+      btn.textContent = '📍';
+      const msgs = {
+        1: 'Permiso de ubicación denegado.\nActívalo en la configuración del navegador.',
+        2: 'No se pudo obtener la ubicación. Verifica que el GPS esté activo.',
+        3: 'Tiempo de espera agotado. Intenta de nuevo.'
+      };
+      alert('⚠️ ' + (msgs[err.code] || 'Error de geolocalización.'));
+    },
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+  );
+}
+
+function updateLocationMarker(pos) {
+  const lat = pos.coords.latitude;
+  const lng = pos.coords.longitude;
+  const acc = pos.coords.accuracy; // metros
+
+  // Crear icono del punto azul pulsante
+  const dotHtml = '<div class="gps-dot"><div class="gps-dot-pulse"></div><div class="gps-dot-inner"></div></div>';
+  const icon = L.divIcon({ html: dotHtml, className: '', iconSize: [16,16], iconAnchor: [8,8] });
+
+  if (!locationMarker) {
+    locationMarker = L.marker([lat, lng], { icon, zIndexOffset: 2000, interactive: false }).addTo(map);
+    locationCircle  = L.circle([lat, lng], {
+      radius: acc, color: '#4a9eff', fillColor: '#4a9eff',
+      fillOpacity: 0.08, weight: 1, opacity: 0.4
+    }).addTo(map);
+  } else {
+    locationMarker.setLatLng([lat, lng]);
+    locationCircle.setLatLng([lat, lng]);
+    locationCircle.setRadius(acc);
+  }
+}
+
+function stopLocation() {
+  locationActive = false;
+  if (locationWatchId !== null) {
+    navigator.geolocation.clearWatch(locationWatchId);
+    locationWatchId = null;
+  }
+  if (locationMarker) { map.removeLayer(locationMarker); locationMarker = null; }
+  if (locationCircle) { map.removeLayer(locationCircle); locationCircle = null; }
+  const btn = document.getElementById('btn-locate');
+  btn.classList.remove('active', 'loading');
+  btn.textContent = '📍';
+}
+
+
 function togglePanel() {
   panelOpen = !panelOpen;
   document.getElementById('bottom-panel').classList.toggle('open', panelOpen);
