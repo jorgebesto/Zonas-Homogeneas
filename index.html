@@ -113,6 +113,17 @@ body { background:var(--bg); color:var(--text); font-family:"Segoe UI",system-ui
 }
 .btn-reset:hover { border-color:var(--accent); color:var(--text); }
 
+/* Memory indicator */
+.mem-wrap { display:flex; flex-direction:column; align-items:flex-end; gap:0.2rem; }
+.mem-bar { width:100px; height:4px; background:var(--border); border-radius:3px; overflow:hidden; }
+.mem-fill { height:100%; width:0%; border-radius:3px; background:var(--done); transition:width 0.4s, background 0.4s; }
+.mem-fill.warn   { background:var(--partial); }
+.mem-fill.danger { background:var(--accent); }
+.mem-label { font-family:"Courier New",monospace; font-size:0.6rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.08em; }
+.mem-count { font-family:"Courier New",monospace; font-size:0.62rem; color:var(--text); font-weight:700; }
+.mem-count.warn   { color:var(--partial); }
+.mem-count.danger { color:var(--accent); }
+
 /* Legend */
 .legend {
   flex-shrink:0; display:flex; gap:1rem; flex-wrap:wrap;
@@ -287,6 +298,11 @@ body { background:var(--bg); color:var(--text); font-family:"Segoe UI",system-ui
   <div class="app-header">
     <h1>Registro <span>Catastral</span></h1>
     <div class="header-actions">
+      <div class="mem-wrap" id="mem-wrap" style="display:none">
+        <span class="mem-label">Memoria</span>
+        <div class="mem-bar"><div class="mem-fill" id="mem-fill"></div></div>
+        <span class="mem-count" id="mem-count">0 MB</span>
+      </div>
       <div class="progress-wrap">
         <span class="prog-label">Finalizadas</span>
         <div class="prog-bar"><div class="prog-fill" id="prog-fill"></div></div>
@@ -295,7 +311,7 @@ body { background:var(--bg); color:var(--text); font-family:"Segoe UI",system-ui
       <button class="btn-kmz" id="btn-kmz" onclick="exportKMZ()" disabled>⬇ KMZ (polígonos)</button>
       <button class="btn-html" id="btn-html" onclick="exportHTML()" disabled>⬇ Reporte HTML</button>
       <button class="btn-reset" onclick="resetApp()">↩ Nuevo archivo</button>
-    </div>
+    </div><!-- /header-actions -->
   </div>
 
   <div class="legend">
