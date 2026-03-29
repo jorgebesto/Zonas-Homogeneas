@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Registro Fotográfico Catastral</title>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/shapefile@0.6.6/dist/shapefile.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js"></script>
+
+<style>
+:root {
+  --bg:#0f1117; --surface:#181c27; --surface2:#1e2333;
+  --accent:#e05c3a; --done:#3ab87a; --partial:#e0b83a;
+  --finished:#7c5fe6; --text:#e8e4dc; --muted:#7a7f94; --border:#2a2f44;
+  --panel-h: 320px;
+}
+* { box-sizing:border-box; margin:0; padding:0; }
+html, body { height:100%; overflow:hidden; }
+body { background:var(--bg); color:var(--text); font-family:"Segoe UI",system-ui,sans-serif; display:flex; flex-direction:column; }
+
+/* ── UPLOAD SCREEN ── */
+#upload-screen {
+  flex:1; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; gap:1.5rem; padding:2rem;
+  overflow-y:auto;
+}
+.hero h1 { font-size:clamp(1.6rem,4vw,2.4rem); font-weight:800; letter-spacing:-0.03em; text-align:center; line-height:1.1; }
+.hero h1 span { color:var(--accent); }
+.hero p { font-family:"Courier New",monospace; font-size:0.68rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.1em; text-align:center; margin-top:0.5rem; line-height:1.8; }
+
+.upload-grid { display:grid; grid-template-columns:1fr 1fr; gap:1rem; width:min(600px,100%); }
+.upload-card {
+  position:relative; border:2px dashed var(--border); border-radius:14px;
+  padding:2rem 1.5rem; text-align:center; cursor:pointer;
+  background:var(--surface); transition:border-color 0.2s, background 0.2s;
+}
+.upload-card:hover, .upload-card.drag-over { border-color:var(--accent); background:rgba(224,92,58,0.06); }
+.upload-card input[type=file] { position:absolute; inset:0; opacity:0; cursor:pointer; width:100%; height:100%; }
+.upload-card .uc-icon { font-size:2.2rem; margin-bottom:0.7rem; }
+.upload-card h3 { font-size:0.9rem; font-weight:700; margin-bottom:0.3rem; }
+.upload-card p { font-family:"Courier New",monospace; font-size:0.58rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.07em; line-height:1.7; }
+.upload-card .ext-badge {
+  display:inline-block; margin-top:0.5rem;
+  font-family:"Courier New",monospace; font-size:0.55rem; font-weight:700;
+  padding:0.15rem 0.5rem; border-radius:4px;
+  background:rgba(224,92,58,0.15); color:var(--accent); border:1px solid rgba(224,92,58,0.3);
+}
+
+.shp-multi-note {
+  width:min(600px,100%);
+  background:rgba(224,184,58,0.08); border:1px solid rgba(224,184,58,0.25);
+  border-radius:10px; padding:0.8rem 1.2rem;
+  font-family:"Courier New",monospace; font-size:0.62rem; color:var(--partial);
+  text-transform:uppercase; letter-spacing:0.07em; line-height:1.8; text-align:center;
+}
+
+#proc-status {
+  display:none; flex-direction:column; align-items:center; gap:0.8rem; text-align:center;
+}
+#proc-status.show { display:flex; }
+.spinner { width:40px; height:40px; border:3px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin 0.8s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+.proc-label { font-family:"Courier New",monospace; font-size:0.65rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.1em; }
+.proc-ok { font-family:"Courier New",monospace; font-size:0.72rem; color:var(--done); font-weight:700; }
+
+/* ── APP SCREEN ── */
+#app-screen { display:none; flex-direction:column; height:100%; }
+#app-screen.show { display:flex; }
+
+/* Header */
+.app-header {
+  flex-shrink:0; padding:0.7rem 1.4rem;
+  background:var(--surface); border-bottom:1px solid var(--border);
+  display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap;
+}
+.app-header h1 { font-size:1.1rem; font-weight:800; letter-spacing:-0.02em; white-space:nowrap; }
+.app-header h1 span { color:var(--accent); }
+.header-actions { display:flex; align-items:center; gap:0.8rem; flex-wrap:wrap; }
+.progress-wrap { display:flex; flex-direction:column; align-items:flex-end; gap:0.2rem; }
+.prog-bar { width:130px; height:4px; background:var(--border); border-radius:3px; overflow:hidden; }
+.prog-fill { height:100%; background:linear-gradient(90deg,var(--accent),var(--done)); transition:width 0.4s; width:0%; }
+.prog-label { font-family:"Courier New",monospace; font-size:0.6rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.08em; }
+.prog-count { font-family:"Courier New",monospace; font-size:0.62rem; color:var(--text); font-weight:700; }
+
+.btn-kmz {
+  font-family:"Courier New",monospace; font-size:0.58rem; font-weight:700;
+  text-transform:uppercase; letter-spacing:0.1em;
+  padding:0.45rem 0.9rem; border-radius:7px; border:none; cursor:pointer;
+  background:var(--surface2); color:var(--muted);
+  border:1px solid var(--border); transition:all 0.15s;
+}
+.btn-kmz:hover:not(:disabled) { border-color:var(--done); color:var(--done); }
+.btn-kmz:disabled { opacity:0.35; cursor:not-allowed; }
+.btn-html {
+  font-family:"Courier New",monospace; font-size:0.58rem; font-weight:700;
+  text-transform:uppercase; letter-spacing:0.1em;
+  padding:0.45rem 0.9rem; border-radius:7px; border:none; cursor:pointer;
+  background:var(--accent); color:white; transition:opacity 0.15s;
+}
+.btn-html:hover:not(:disabled) { opacity:0.85; }
+.btn-html:disabled { opacity:0.35; cursor:not-allowed; }
+.btn-reset {
+  font-family:"Courier New",monospace; font-size:0.56rem;
+  text-transform:uppercase; letter-spacing:0.08em;
+  padding:0.4rem 0.7rem; border-radius:6px;
+  background:var(--surface2); color:var(--muted);
+  border:1px solid var(--border); cursor:pointer; transition:all 0.15s;
+}
+.btn-reset:hover { border-color:var(--accent); color:var(--text); }
+
+/* Legend */
+.legend {
+  flex-shrink:0; display:flex; gap:1rem; flex-wrap:wrap;
+  padding:0.4rem 1.4rem; border-bottom:1px solid var(--border); background:#13161f;
+}
+.leg-item { display:flex; align-items:center; gap:0.35rem; font-family:"Courier New",monospace; font-size:0.54rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; }
+.leg-dot { width:9px; height:9px; border-radius:2px; }
+.leg-dot.empty    { background:rgba(224,92,58,0.5);  border:1px solid var(--accent); }
+.leg-dot.partial  { background:rgba(224,184,58,0.5); border:1px solid var(--partial); }
+.leg-dot.finished { background:rgba(124,95,230,0.6); border:1px solid var(--finished); }
+
+/* Map area — fills remaining space above panel */
+#map-wrap {
+  flex:1; position:relative; min-height:0;
+  transition:height 0.3s ease;
+}
+#map { width:100%; height:100%; }
+
+/* ── SLIDING BOTTOM PANEL ── */
+#bottom-panel {
+  flex-shrink:0;
+  height:42px; /* collapsed = just the handle */
+  background:var(--surface);
+  border-top:2px solid var(--border);
+  transition:height 0.3s ease;
+  display:flex; flex-direction:column;
+  overflow:hidden;
+  position:relative;
+}
+#bottom-panel.open { height:var(--panel-h); }
+
+/* Handle bar */
+.panel-handle {
+  flex-shrink:0; height:42px;
+  display:flex; align-items:center; justify-content:space-between;
+  padding:0 1.4rem; cursor:pointer; user-select:none;
+  border-bottom:1px solid var(--border);
+}
+.panel-handle:hover { background:rgba(255,255,255,0.03); }
+.handle-left { display:flex; align-items:center; gap:0.8rem; }
+.handle-pill { width:36px; height:4px; border-radius:2px; background:var(--border); }
+.panel-title { font-family:"Courier New",monospace; font-size:0.65rem; font-weight:700; text-transform:uppercase; letter-spacing:0.1em; color:var(--muted); }
+.panel-title span { color:var(--accent); }
+.panel-chevron { font-size:0.7rem; color:var(--muted); transition:transform 0.3s; }
+#bottom-panel.open .panel-chevron { transform:rotate(180deg); }
+
+/* Panel body */
+.panel-body { flex:1; overflow-y:auto; padding:1rem 1.4rem 1rem; min-height:0; }
+
+/* Empty state */
+.panel-empty { text-align:center; padding:2rem 1rem; color:var(--muted); }
+.panel-empty .pe-icon { font-size:2rem; opacity:0.3; margin-bottom:0.6rem; }
+.panel-empty p { font-family:"Courier New",monospace; font-size:0.6rem; text-transform:uppercase; letter-spacing:0.08em; line-height:1.8; }
+
+/* Manzana panel content */
+.mz-header {
+  display:flex; align-items:center; gap:0.8rem; flex-wrap:wrap;
+  margin-bottom:0.7rem; padding-bottom:0.7rem; border-bottom:1px solid var(--border);
+}
+.mz-header h2 { font-size:1rem; font-weight:800; letter-spacing:-0.02em; }
+.mz-header h2 span { color:var(--accent); }
+.status-badge { font-family:"Courier New",monospace; font-size:0.52rem; text-transform:uppercase; letter-spacing:0.1em; padding:0.18rem 0.55rem; border-radius:20px; font-weight:700; }
+.status-badge.empty    { background:rgba(224,92,58,0.12); color:#e07060; border:1px solid rgba(224,92,58,0.3); }
+.status-badge.partial  { background:rgba(224,184,58,0.12); color:#e0c060; border:1px solid rgba(224,184,58,0.3); }
+.status-badge.finished { background:rgba(124,95,230,0.15); color:#b09ef5; border:1px solid rgba(124,95,230,0.4); }
+.mz-coords { font-family:"Courier New",monospace; font-size:0.55rem; color:var(--muted); margin-left:auto; }
+
+.fin-banner {
+  display:none; align-items:center; gap:0.6rem;
+  background:rgba(124,95,230,0.1); border:1px solid rgba(124,95,230,0.3);
+  border-radius:7px; padding:0.5rem 0.9rem; margin-bottom:0.8rem;
+  font-family:"Courier New",monospace; font-size:0.58rem; color:#b09ef5;
+  text-transform:uppercase; letter-spacing:0.07em;
+}
+.fin-banner.show { display:flex; }
+.btn-unfinish { margin-left:auto; font-family:"Courier New",monospace; font-size:0.52rem; text-transform:uppercase; letter-spacing:0.07em; padding:0.2rem 0.5rem; border-radius:5px; background:transparent; border:1px solid rgba(124,95,230,0.4); color:#b09ef5; cursor:pointer; }
+.btn-unfinish:hover { background:rgba(124,95,230,0.15); }
+
+.photo-meta { font-family:"Courier New",monospace; font-size:0.58rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.07em; margin-bottom:0.8rem; }
+.photo-meta span { color:var(--accent); font-weight:700; }
+
+/* Corner grid */
+.corner-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:0.5rem; margin-bottom:0.8rem; }
+@media (max-width:700px) { .corner-grid { grid-template-columns:1fr 1fr; } }
+
+.c-slot { border-radius:7px; border:1px dashed var(--border); background:var(--surface2); overflow:hidden; position:relative; }
+.c-slot.filled { border-style:solid; }
+.c-slot-hdr { display:flex; align-items:center; justify-content:space-between; padding:2px 5px; background:rgba(0,0,0,0.3); border-bottom:1px solid var(--border); }
+.c-slot-lbl { font-family:"Courier New",monospace; font-size:6px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; }
+.c-slot-cnt { font-family:"Courier New",monospace; font-size:6px; color:var(--accent); font-weight:700; }
+.c-thumbs { display:flex; gap:2px; padding:3px; min-height:52px; }
+.c-thumb { flex:1 1 0; min-width:0; position:relative; border-radius:3px; overflow:hidden; background:#0a0c12; cursor:zoom-in; }
+.c-thumb img { width:100%; height:100%; object-fit:cover; display:block; min-height:46px; }
+.c-thumb-rm { position:absolute; top:2px; right:2px; width:14px; height:14px; border-radius:50%; background:rgba(192,57,43,0.9); border:none; color:white; font-size:0.48rem; cursor:pointer; display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity 0.15s; z-index:5; }
+.c-thumb:hover .c-thumb-rm { opacity:1; }
+.c-add-row { display:flex; justify-content:center; padding:3px; border-top:1px solid var(--border); }
+.c-add-btn { font-family:"Courier New",monospace; font-size:6px; text-transform:uppercase; letter-spacing:0.07em; font-weight:700; padding:2px 7px; border-radius:4px; border:none; cursor:pointer; background:rgba(224,92,58,0.12); color:var(--accent); transition:background 0.15s; }
+.c-add-btn:hover { background:rgba(224,92,58,0.25); }
+.c-empty-ph { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; min-height:68px; cursor:pointer; border:none; background:transparent; width:100%; color:var(--muted); font-family:"Courier New",monospace; font-size:6px; text-transform:uppercase; letter-spacing:0.05em; transition:color 0.15s, background 0.15s; }
+.c-empty-ph:hover { color:var(--accent); background:rgba(224,92,58,0.06); }
+.c-empty-ph .plus { font-size:1.2rem; line-height:1; }
+
+/* Actions row */
+.panel-actions { display:flex; gap:0.5rem; flex-wrap:wrap; padding-top:0.7rem; border-top:1px solid var(--border); align-items:center; }
+.btn { font-family:"Courier New",monospace; font-size:0.55rem; text-transform:uppercase; letter-spacing:0.09em; font-weight:700; padding:0.45rem 0.8rem; border-radius:6px; border:none; cursor:pointer; transition:all 0.15s; display:flex; align-items:center; gap:0.3rem; }
+.btn-finish { background:var(--finished); color:white; margin-left:auto; box-shadow:0 0 10px rgba(124,95,230,0.3); }
+.btn-finish:hover { background:#6b4ed4; }
+.btn-dl { background:var(--accent); color:white; }
+.btn-dl:hover { background:#c94e2e; }
+.btn-ghost { background:var(--surface2); color:var(--muted); border:1px solid var(--border); }
+.btn-ghost:hover { border-color:var(--accent); color:var(--text); }
+
+/* Lightbox */
+#lightbox { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.94); z-index:9000; align-items:center; justify-content:center; flex-direction:column; gap:1rem; }
+#lightbox.show { display:flex; }
+#lightbox img { max-width:88vw; max-height:82vh; border-radius:8px; border:1px solid var(--border); object-fit:contain; }
+#lb-close { position:absolute; top:1rem; right:1rem; background:var(--surface); border:1px solid var(--border); color:var(--text); width:36px; height:36px; border-radius:50%; font-size:1rem; cursor:pointer; display:flex; align-items:center; justify-content:center; }
+#lb-caption { font-family:"Courier New",monospace; font-size:0.6rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.1em; }
+
+/* Leaflet custom polygon styles */
+.lf-empty    { fill:#e05c3a; fill-opacity:0.25; stroke:#e05c3a; stroke-width:1.5; }
+.lf-partial  { fill:#e0b83a; fill-opacity:0.30; stroke:#e0b83a; stroke-width:1.5; }
+.lf-finished { fill:#7c5fe6; fill-opacity:0.40; stroke:#7c5fe6; stroke-width:2; }
+.lf-selected { fill:white;   fill-opacity:0.30; stroke:white;   stroke-width:2.5; }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════
+     UPLOAD SCREEN
+══════════════════════════════ -->
+<div id="upload-screen">
+  <div class="hero">
+    <h1>Registro <span>Catastral</span> Georreferenciado</h1>
+    <p>Sube tu archivo geográfico para comenzar<br>Las manzanas se dibujarán automáticamente en el mapa</p>
+  </div>
+
+  <div class="upload-grid">
+    <!-- Shapefile card -->
+    <div class="upload-card" id="shp-card">
+      <input type="file" id="shp-input" accept=".shp,.dbf,.prj,.cpg,.shx" multiple onchange="handleShapefile(event)">
+      <div class="uc-icon">📐</div>
+      <h3>Shapefile</h3>
+      <p>Selecciona todos los archivos del shapefile juntos</p>
+      <span class="ext-badge">.shp · .dbf · .prj</span>
+    </div>
+    <!-- GeoPackage card -->
+    <div class="upload-card" id="gpkg-card">
+      <input type="file" id="gpkg-input" accept=".gpkg" onchange="handleGeopackage(event)">
+      <div class="uc-icon">📦</div>
+      <h3>GeoPackage</h3>
+      <p>Un solo archivo con toda la información</p>
+      <span class="ext-badge">.gpkg</span>
+    </div>
+  </div>
+
+  <div class="shp-multi-note">
+    ⚠ Para Shapefile: selecciona los archivos .shp, .dbf y .prj al mismo tiempo (Ctrl+clic)
+  </div>
+
+  <div id="proc-status">
+    <div class="spinner"></div>
+    <p class="proc-label" id="proc-label">Leyendo archivo...</p>
+    <p class="proc-ok" id="proc-ok"></p>
+  </div>
+</div>
+
+<!-- ══════════════════════════════
+     APP SCREEN
+══════════════════════════════ -->
+<div id="app-screen">
+  <div class="app-header">
+    <h1>Registro <span>Catastral</span></h1>
+    <div class="header-actions">
+      <div class="progress-wrap">
+        <span class="prog-label">Finalizadas</span>
+        <div class="prog-bar"><div class="prog-fill" id="prog-fill"></div></div>
+        <span class="prog-count" id="prog-count">0 / 0</span>
+      </div>
+      <button class="btn-kmz" id="btn-kmz" onclick="exportKMZ()" disabled>⬇ KMZ (polígonos)</button>
+      <button class="btn-html" id="btn-html" onclick="exportHTML()" disabled>⬇ Reporte HTML</button>
+      <button class="btn-reset" onclick="resetApp()">↩ Nuevo archivo</button>
+    </div>
+  </div>
+
+  <div class="legend">
+    <div class="leg-item"><div class="leg-dot empty"></div> Sin fotos</div>
+    <div class="leg-item"><div class="leg-dot partial"></div> Con fotos</div>
+    <div class="leg-item"><div class="leg-dot finished"></div> Finalizada ✓</div>
+  </div>
+
+  <div id="map-wrap">
+    <div id="map"></div>
+  </div>
+
+  <!-- Sliding bottom panel -->
+  <div id="bottom-panel">
+    <div class="panel-handle" onclick="togglePanel()">
+      <div class="handle-left">
+        <div class="handle-pill"></div>
+        <span class="panel-title" id="panel-title">Selecciona una manzana ↑</span>
+      </div>
+      <span class="panel-chevron">▲</span>
+    </div>
+    <div class="panel-body">
+      <div class="panel-empty" id="panel-empty">
+        <div class="pe-icon">🗺️</div>
+        <p>Haz clic en una manzana del mapa<br>para gestionar sus fotos</p>
+      </div>
+      <div id="panel-content" style="display:none">
+        <div class="mz-header">
+          <h2>Manzana <span id="mz-num">—</span></h2>
+          <span class="status-badge empty" id="mz-badge">Sin fotos</span>
+          <span class="mz-coords" id="mz-coords"></span>
+        </div>
+        <div class="fin-banner" id="fin-banner">
+          <span>✅</span><span>Manzana finalizada</span>
+          <button class="btn-unfinish" onclick="unfinishManzana()">Reabrir</button>
+        </div>
+        <p class="photo-meta">Fotos: <span id="mz-photo-count">0</span> · Esquinas: <span id="mz-corner-count">0</span>/4</p>
+        <div class="corner-grid" id="corner-grid"></div>
+        <div class="panel-actions">
+          <button class="btn btn-dl" id="btn-dl" onclick="downloadPhotos()" style="display:none">⬇ Descargar</button>
+          <button class="btn btn-ghost" onclick="clearManzana()">🗑 Limpiar</button>
+          <button class="btn btn-finish" id="btn-finish" onclick="finishManzana()">✓ Finalizar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- file input for photos -->
+<input type="file" id="photo-input" accept="image/*" style="display:none" onchange="handlePhotoFile(event)">
+
+<!-- Lightbox -->
+<div id="lightbox" onclick="closeLightbox()">
+  <button id="lb-close" onclick="closeLightbox()">✕</button>
+  <img id="lb-img" src="" alt="">
+  <p id="lb-caption"></p>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
