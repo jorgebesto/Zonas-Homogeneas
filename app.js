@@ -6,6 +6,7 @@ let photos      = {};   // photos[id][corner] = [{name,dataUrl}, ...]
 let finished    = {};   // finished[id] = bool
 let currentId   = null;
 let pendingCorner = null;
+let pendingLatLng  = null;  // coordenadas elegidas en el mapa
 let leafletLayers = {}; // id → L.polygon
 let map         = null;
 let panelOpen   = false;
@@ -252,7 +253,7 @@ function processGeoJSON(geojson, fromProj) {
     const name = nameKey ? String(props[nameKey]) : String(i+1);
 
     features.push({ id: i, num: i+1, name, rings, centroid, props });
-    photos[i]   = photos[i]   || {};
+    photos[i]   = photos[i]   || [];
     finished[i] = finished[i] || false;
   });
 
@@ -265,67 +266,50 @@ function processGeoJSON(geojson, fromProj) {
 
 
 // ═══════════════════════════════════════════════════
-//  CORNER MARKERS  (puntos por esquina sobre el mapa)
+//  FREE PHOTO MARKERS  (puntos libres en el mapa)
 // ═══════════════════════════════════════════════════
-const photoMarkers = {}; // photoMarkers[featureId][corner] = L.Marker
+// photoMarkers[featureId][photoIndex] = L.Marker
+const photoMarkers = {};
 
-const CORNER_STYLES = {
-  'top-left':     { color:'#60c0ff', offset:[0.15, 0.15] },
-  'top-right':    { color:'#f5c842', offset:[0.15, 0.85] },
-  'bottom-left':  { color:'#e05c3a', offset:[0.85, 0.15] },
-  'bottom-right': { color:'#3ab87a', offset:[0.85, 0.85] }
-};
-
-function cornerLatLng(featureId, corner) {
-  const f = features.find(x => x.id === featureId);
-  if (!f) return null;
-  const ring = f.rings[0];
-  const lats = ring.map(p => p[0]);
-  const lngs = ring.map(p => p[1]);
-  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
-  const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
-  const off = CORNER_STYLES[corner].offset;
-  return [
-    minLat + (maxLat - minLat) * off[0],
-    minLng + (maxLng - minLng) * off[1]
-  ];
+function makePhotoIcon() {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">'
+    + '<circle cx="8" cy="8" r="6" fill="#ffffff" stroke="#0f1117" stroke-width="2.5"/>'
+    + '<circle cx="8" cy="8" r="2.5" fill="#0f1117" opacity="0.7"/></svg>';
+  return L.divIcon({ html: svg, className: '', iconSize: [16, 16], iconAnchor: [8, 8] });
 }
 
-function makeCornerIcon(corner) {
-  const color = CORNER_STYLES[corner].color;
-  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">'
-    + '<circle cx="9" cy="9" r="7" fill="' + color + '" stroke="#0f1117" stroke-width="2.5"/>'
-    + '<circle cx="9" cy="9" r="2.5" fill="#0f1117" opacity="0.6"/>'
-    + '</svg>';
-  return L.divIcon({ html: svg, className: '', iconSize: [18, 18], iconAnchor: [9, 9] });
-}
-
-function syncCornerMarkers(featureId) {
+function syncPhotoMarkers(featureId) {
   if (!map) return;
-  const p = photos[featureId] || {};
+  const pList = photos[featureId] || [];
   if (!photoMarkers[featureId]) photoMarkers[featureId] = {};
 
-  CORNERS.forEach(corner => {
-    const arr = p[corner] || [];
-    const existing = photoMarkers[featureId][corner];
-
-    if (arr.length > 0 && !existing) {
-      const ll = cornerLatLng(featureId, corner);
-      if (!ll) return;
-      const label = CLABELS[corner] + ' — ' + arr.length + ' foto' + (arr.length > 1 ? 's' : '');
-      const marker = L.marker(ll, { icon: makeCornerIcon(corner), interactive: true, zIndexOffset: 1000 });
-      marker.bindTooltip(label, { direction: 'top', className: 'lf-tt' });
-      marker.on('click', () => selectManzana(featureId));
-      marker.addTo(map);
-      photoMarkers[featureId][corner] = marker;
-    } else if (arr.length > 0 && existing) {
-      const label = CLABELS[corner] + ' — ' + arr.length + ' foto' + (arr.length > 1 ? 's' : '');
-      existing.setTooltipContent(label);
-    } else if (arr.length === 0 && existing) {
-      map.removeLayer(existing);
-      delete photoMarkers[featureId][corner];
+  // Remove markers for deleted photos
+  Object.keys(photoMarkers[featureId]).forEach(idx => {
+    if (!pList[idx]) {
+      map.removeLayer(photoMarkers[featureId][idx]);
+      delete photoMarkers[featureId][idx];
     }
   });
+
+  // Add markers for new photos
+  pList.forEach((ph, idx) => {
+    if (!photoMarkers[featureId][idx]) {
+      const marker = L.marker([ph.lat, ph.lng], {
+        icon: makePhotoIcon(), interactive: true, zIndexOffset: 1000
+      });
+      marker.bindTooltip('Foto ' + (idx+1) + ' \u2014 ' + ph.lat.toFixed(5) + ', ' + ph.lng.toFixed(5),
+        { direction: 'top', className: 'lf-tt' });
+      marker.on('click', () => selectManzana(featureId));
+      marker.addTo(map);
+      photoMarkers[featureId][idx] = marker;
+    }
+  });
+}
+
+function removeAllMarkersForFeature(featureId) {
+  if (!photoMarkers[featureId]) return;
+  Object.values(photoMarkers[featureId]).forEach(m => map && map.removeLayer(m));
+  photoMarkers[featureId] = {};
 }
 
 // ═══════════════════════════════════════════════════
@@ -373,7 +357,7 @@ function openPanel() {
 
 function selectManzana(id) {
   currentId = id;
-  if (!photos[id]) photos[id] = {};
+  if (!photos[id]) photos[id] = [];
 
   // Reset all polygon styles
   features.forEach(f => {
@@ -402,90 +386,94 @@ function selectManzana(id) {
 }
 
 function renderPanelContent() {
-  const id  = currentId;
-  const p   = photos[id] || {};
-  const isF = !!finished[id];
+  const id   = currentId;
+  const pList = photos[id] || [];
+  const isF  = !!finished[id];
 
-  let total=0, occ=0;
-  CORNERS.forEach(c => { const a=p[c]||[]; if(a.length){occ++;total+=a.length;} });
-
-  document.getElementById('mz-photo-count').textContent = total;
-  document.getElementById('mz-corner-count').textContent = occ;
+  document.getElementById('mz-photo-count').textContent = pList.length;
 
   const badge = document.getElementById('mz-badge');
   badge.className = 'status-badge';
-  if (isF)        { badge.textContent='✓ Finalizada'; badge.classList.add('finished'); }
-  else if (total) { badge.textContent=total+' foto'+(total>1?'s':''); badge.classList.add('partial'); }
-  else            { badge.textContent='Sin fotos'; badge.classList.add('empty'); }
+  if (isF)          { badge.textContent='✓ Finalizada'; badge.classList.add('finished'); }
+  else if (pList.length) { badge.textContent=pList.length+' foto'+(pList.length>1?'s':''); badge.classList.add('partial'); }
+  else              { badge.textContent='Sin fotos'; badge.classList.add('empty'); }
 
   document.getElementById('fin-banner').classList.toggle('show', isF);
   document.getElementById('btn-finish').style.display = isF ? 'none' : 'flex';
+  const btnPin = document.getElementById('btn-pin');
+  if (btnPin) btnPin.style.display = isF ? 'none' : 'flex';
 
-  // Corner grid
-  const grid = document.getElementById('corner-grid');
-  grid.innerHTML = '';
-  CORNERS.forEach(corner => {
-    const arr  = p[corner] || [];
-    const slot = document.createElement('div');
-    slot.className = 'c-slot' + (arr.length ? ' filled' : '');
-
-    const hdr = document.createElement('div'); hdr.className='c-slot-hdr';
-    const lbl = document.createElement('span'); lbl.className='c-slot-lbl'; lbl.textContent=CLABELS[corner];
-    hdr.appendChild(lbl);
-    if (arr.length) { const cnt=document.createElement('span'); cnt.className='c-slot-cnt'; cnt.textContent=arr.length+'/2'; hdr.appendChild(cnt); }
-    slot.appendChild(hdr);
-
-    if (arr.length) {
-      const thumbs = document.createElement('div'); thumbs.className='c-thumbs';
-      arr.forEach((ph,idx) => {
-        const wrap=document.createElement('div'); wrap.className='c-thumb';
-        wrap.onclick = ()=>openLightbox(corner,idx);
-        const img=document.createElement('img'); img.src=ph.dataUrl;
-        wrap.appendChild(img);
-        if (!isF) {
-          const rm=document.createElement('button'); rm.className='c-thumb-rm'; rm.textContent='✕';
-          rm.onclick=(e)=>{e.stopPropagation();removePhoto(corner,idx);};
-          wrap.appendChild(rm);
-        }
-        thumbs.appendChild(wrap);
-      });
-      slot.appendChild(thumbs);
-
-      if (arr.length<2 && !isF) {
-        const ar=document.createElement('div'); ar.className='c-add-row';
-        const ab=document.createElement('button'); ab.className='c-add-btn'; ab.textContent='+ 2ª foto';
-        ab.onclick=()=>triggerPhoto(corner);
-        ar.appendChild(ab); slot.appendChild(ar);
-      }
-    } else {
-      if (!isF) {
-        const ph=document.createElement('button'); ph.className='c-empty-ph';
-        ph.innerHTML='<span class="plus">+</span>Agregar foto';
-        ph.onclick=()=>triggerPhoto(corner);
-        slot.appendChild(ph);
-      } else {
-        const ph=document.createElement('div'); ph.className='c-empty-ph'; ph.style.cursor='default';
-        ph.innerHTML='<span style="opacity:0.25;font-size:1rem">—</span>';
-        slot.appendChild(ph);
-      }
+  // Photo list
+  const list = document.getElementById('photo-list');
+  list.innerHTML = '';
+  pList.forEach((ph, idx) => {
+    const item = document.createElement('div'); item.className = 'photo-item';
+    const img  = document.createElement('img'); img.src = ph.dataUrl;
+    img.onclick = () => openLightboxByIndex(idx);
+    const info = document.createElement('div'); info.className = 'photo-item-info';
+    const coord = document.createElement('div'); coord.className = 'photo-item-coord';
+    coord.textContent = ph.lat.toFixed(5) + ', ' + ph.lng.toFixed(5);
+    const nm = document.createElement('div'); nm.className = 'photo-item-name';
+    nm.textContent = ph.name;
+    info.appendChild(coord); info.appendChild(nm);
+    item.appendChild(img); item.appendChild(info);
+    if (!isF) {
+      const rm = document.createElement('button'); rm.className = 'photo-item-rm'; rm.textContent = '✕';
+      rm.onclick = () => removePhoto(idx);
+      item.appendChild(rm);
     }
-    grid.appendChild(slot);
+    list.appendChild(item);
   });
 
-  document.getElementById('btn-dl').style.display = total>0?'flex':'none';
+  document.getElementById('btn-dl').style.display = pList.length > 0 ? 'flex' : 'none';
   updatePolygonStyle(id);
   updateProgress();
-  syncCornerMarkers(id);
+  syncPhotoMarkers(id);
+}
+
+// ═══════════════════════════════════════════════════
+//  PIN MODE  — el usuario toca el mapa para ubicar la foto
+// ═══════════════════════════════════════════════════
+let pinModeActive = false;
+let pinMapClickHandler = null;
+
+function enterPinMode() {
+  if (!currentId && currentId !== 0) return;
+  pinModeActive = true;
+  document.getElementById('map-wrap').classList.add('pin-mode');
+  document.getElementById('pin-banner').style.display = 'block';
+  document.getElementById('pin-cancel').style.display = 'block';
+  document.getElementById('btn-pin').classList.add('active');
+  document.getElementById('btn-pin').textContent = '⏳ Toca el mapa...';
+  // Cerrar panel para ver el mapa
+  if (panelOpen) togglePanel();
+
+  pinMapClickHandler = function(e) {
+    if (!pinModeActive) return;
+    pendingLatLng = { lat: e.latlng.lat, lng: e.latlng.lng };
+    cancelPinMode(true); // true = conservar pendingLatLng
+    openPhotoSourceModal();
+  };
+  map.once('click', pinMapClickHandler);
+}
+
+function cancelPinMode(keepLatLng) {
+  pinModeActive = false;
+  document.getElementById('map-wrap').classList.remove('pin-mode');
+  document.getElementById('pin-banner').style.display = 'none';
+  document.getElementById('pin-cancel').style.display = 'none';
+  const btn = document.getElementById('btn-pin');
+  if (btn) { btn.classList.remove('active'); btn.textContent = '📍 Agregar foto'; }
+  if (pinMapClickHandler) { map.off('click', pinMapClickHandler); pinMapClickHandler = null; }
+  if (!keepLatLng) pendingLatLng = null;
 }
 
 // ═══════════════════════════════════════════════════
 //  PHOTOS
 // ═══════════════════════════════════════════════════
-function triggerPhoto(corner) {
-  pendingCorner = corner;
+function openPhotoSourceModal() {
   const modal = document.getElementById('photo-source-modal');
   modal.style.display = 'flex';
-  // pequeña animacion de entrada
   const inner = modal.querySelector('div');
   inner.style.transform = 'translateY(100%)';
   inner.style.transition = 'transform 0.25s ease';
@@ -502,7 +490,12 @@ function closePhotoModal() {
   const modal = document.getElementById('photo-source-modal');
   const inner = modal.querySelector('div');
   inner.style.transform = 'translateY(100%)';
-  setTimeout(() => { modal.style.display = 'none'; inner.style.transform = ''; }, 220);
+  setTimeout(() => {
+    modal.style.display = 'none';
+    inner.style.transform = '';
+    // Solo limpiar si el usuario canceló (no eligió ninguna fuente)
+    // pendingLatLng se limpia en handlePhotoFile después de usarse
+  }, 220);
 }
 
 // ═══════════════════════════════════════════════════
@@ -514,10 +507,8 @@ const MEM_BLOCK_PCT = 0.90; // 90% → bloqueo rojo
 
 function calcMemoryMB() {
   let bytes = 0;
-  Object.values(photos).forEach(corners => {
-    Object.values(corners).forEach(arr => {
-      arr.forEach(ph => { bytes += ph.dataUrl.length * 0.75; }); // base64 → bytes reales
-    });
+  Object.values(photos).forEach(pList => {
+    (pList||[]).forEach(ph => { bytes += ph.dataUrl.length * 0.75; });
   });
   return bytes / (1024 * 1024);
 }
@@ -565,52 +556,43 @@ function compressImage(dataUrl) {
 
 function handlePhotoFile(event) {
   const file = event.target.files[0];
-  if (!file || !pendingCorner) return;
+  if (!file || !pendingLatLng) { event.target.value=''; return; }
   event.target.value = '';
-  const corner = pendingCorner; pendingCorner = null;
+  const ll = { ...pendingLatLng };
+  pendingLatLng = null;
 
-  // Verificar si ya estamos bloqueados por memoria
+  // Check memory
   const mb = calcMemoryMB();
   if (mb / MEM_LIMIT_MB >= MEM_BLOCK_PCT) {
-    alert(
-      '⚠️ Memoria casi llena (' + mb.toFixed(1) + ' MB / ' + MEM_LIMIT_MB + ' MB)\n\n' +
-      'No se pueden agregar más fotos sin riesgo de falla.\n' +
-      'Genera el reporte HTML ahora para liberar memoria\n' +
-      'y continúa con un nuevo archivo.'
-    );
+    alert('⚠️ Memoria casi llena (' + mb.toFixed(1) + ' MB)\nGenera el reporte HTML antes de continuar.');
     return;
   }
 
   const reader = new FileReader();
   reader.onload = async (e) => {
     const id = currentId;
-    if (!photos[id]) photos[id] = {};
-    if (!photos[id][corner]) photos[id][corner] = [];
-    if (photos[id][corner].length >= 2) return;
-
-    // Comprimir antes de guardar
+    if (!photos[id]) photos[id] = [];
     const compressed = await compressImage(e.target.result);
-    photos[id][corner].push({ name: file.name, dataUrl: compressed });
+    photos[id].push({ lat: ll.lat, lng: ll.lng, dataUrl: compressed, name: file.name });
+
+    // Reopen panel and render
+    if (!panelOpen) togglePanel();
     renderPanelContent();
     updateMemoryUI();
 
-    // Advertencia al llegar al 70%
+    // Memory warning
     const newMb  = calcMemoryMB();
     const newPct = newMb / MEM_LIMIT_MB;
     if (newPct >= MEM_WARN_PCT && newPct < MEM_BLOCK_PCT) {
-      const totalFotos = Object.values(photos).reduce((s, c) =>
-        s + Object.values(c).reduce((ss, a) => ss + a.length, 0), 0);
-      // Mostrar solo una vez por cada 10% superado
+      const totalFotos = Object.values(photos).reduce((s,a) => s + a.length, 0);
       const threshold = Math.floor(newPct * 10);
       if (threshold !== handlePhotoFile._lastWarn) {
         handlePhotoFile._lastWarn = threshold;
-        setTimeout(() => {
-          alert(
-            '⚠️ Memoria al ' + Math.round(newPct * 100) + '%\n\n' +
-            '📊 ' + totalFotos + ' fotos · ' + newMb.toFixed(1) + ' MB usados de ' + MEM_LIMIT_MB + ' MB\n\n' +
-            'Recomendación: exporta el reporte HTML pronto\npara evitar pérdida de datos.'
-          );
-        }, 300);
+        setTimeout(() => alert(
+          '⚠️ Memoria al ' + Math.round(newPct*100) + '%\n' +
+          totalFotos + ' fotos · ' + newMb.toFixed(1) + ' MB / ' + MEM_LIMIT_MB + ' MB\n\n' +
+          'Exporta el reporte pronto para evitar pérdida de datos.'
+        ), 300);
       }
     }
   };
@@ -618,25 +600,30 @@ function handlePhotoFile(event) {
 }
 handlePhotoFile._lastWarn = -1;
 
-function removePhoto(corner,idx) {
-  const p=photos[currentId];
-  if(p&&p[corner]){p[corner].splice(idx,1); if(!p[corner].length) delete p[corner];}
+function removePhoto(idx) {
+  const p = photos[currentId];
+  if (p && p[idx] !== undefined) {
+    p.splice(idx, 1);
+    // Remove marker for this index and re-sync all
+    removeAllMarkersForFeature(currentId);
+  }
   renderPanelContent();
   updateMemoryUI();
 }
 function clearManzana() {
-  if(!currentId&&currentId!==0) return;
-  const p=photos[currentId]||{};
-  const tot=Object.values(p).reduce((s,a)=>s+a.length,0);
-  if(tot>0&&!confirm('¿Eliminar todas las fotos de Manzana '+features.find(f=>f.id===currentId)?.num+'?')) return;
-  photos[currentId]={}; finished[currentId]=false;
+  if (!currentId && currentId !== 0) return;
+  const pList = photos[currentId] || [];
+  if (pList.length > 0 && !confirm('¿Eliminar todas las fotos de Manzana ' + (features.find(f=>f.id===currentId)?.num) + '?')) return;
+  photos[currentId] = [];
+  finished[currentId] = false;
+  removeAllMarkersForFeature(currentId);
   renderPanelContent();
   updateMemoryUI();
 }
 function finishManzana()   { finished[currentId]=true;  renderPanelContent(); }
 function unfinishManzana() { finished[currentId]=false; renderPanelContent(); }
 
-function hasPhotos(id) { return Object.values(photos[id]||{}).some(a=>a.length>0); }
+function hasPhotos(id) { return (photos[id]||[]).length > 0; }
 
 function updatePolygonStyle(id) {
   const ly=leafletLayers[id]; if(!ly) return;
@@ -647,12 +634,13 @@ function updatePolygonStyle(id) {
 }
 
 function updateProgress() {
-  const n=Object.keys(finished).filter(k=>finished[k]).length;
-  const total=features.length;
-  document.getElementById('prog-fill').style.width=(total?n/total*100:0)+'%';
-  document.getElementById('prog-count').textContent=n+' / '+total;
-  document.getElementById('btn-kmz').disabled = n===0 && !features.some(f=>hasPhotos(f.id));
-  document.getElementById('btn-html').disabled = !features.some(f=>hasPhotos(f.id));
+  const total = features.length;
+  const fin   = features.filter(f => finished[f.id]).length;
+  document.getElementById('prog-fill').style.width  = total ? (fin/total*100)+'%' : '0%';
+  document.getElementById('prog-count').textContent = fin + ' / ' + total;
+  const hasAny = features.some(f => hasPhotos(f.id));
+  document.getElementById('btn-html').disabled = !hasAny;
+  document.getElementById('btn-kmz').disabled  = !hasAny;
 }
 
 function downloadPhotos() {
@@ -693,66 +681,55 @@ function resizeImage(dataUrl, maxPx) {
 async function exportKMZ() {
   const btn = document.getElementById('btn-kmz');
   btn.textContent='\u23f3 Generando...'; btn.disabled=true;
-
   try {
     const zip = new JSZip();
     let placemarks = '';
-
     for (const f of features) {
-      const p   = photos[f.id] || {};
+      const pList = photos[f.id] || [];
+      if (!pList.length) continue;
       const isF = !!finished[f.id];
-      const allPhotos = [];
-      CORNERS.forEach(c => (p[c]||[]).forEach(ph => allPhotos.push({corner:c, ph})));
-      if (!allPhotos.length) continue;
-
-      // Google Earth ONLY supports data: URIs inline in CDATA — not zip-relative paths
       let inner = '<b>Manzana ' + f.num + '</b><br>';
       if (f.name !== String(f.num)) inner += 'Nombre: ' + f.name + '<br>';
       if (isF) inner += '<i style="color:#7c5fe6">&#10003; Finalizada</i><br>';
       inner += '<hr style="border:0;border-top:1px solid #ccc;margin:6px 0">';
-
-      for (const {corner, ph} of allPhotos) {
+      for (let idx=0; idx<pList.length; idx++) {
+        const ph = pList[idx];
         const resized = await resizeImage(ph.dataUrl, 600);
         inner += '<div style="margin-bottom:10px">';
-        inner += '<div style="font-size:11px;color:#666;margin-bottom:4px">' + CLABELS[corner] + '</div>';
+        inner += '<div style="font-size:11px;color:#666;margin-bottom:4px">Foto ' + (idx+1) + ' · ' + ph.lat.toFixed(5) + ', ' + ph.lng.toFixed(5) + '</div>';
         inner += '<img src="' + resized + '" width="300" style="max-width:100%;border-radius:4px">';
         inner += '</div>';
       }
-
-      const descHtml  = '<![CDATA[' + inner + ']]>';
-      const coordStr  = f.rings[0].map(([lat,lng]) => lng+','+lat+',0').join(' ');
-      const color     = isF ? 'cc6e5f9f' : hasPhotos(f.id) ? 'cc38b8e0' : 'cc3a5ce0';
-
-      placemarks += '\n  <Placemark>' +
-        '\n    <n>Manzana ' + f.num + '</n>' +
-        '\n    <description>' + descHtml + '</description>' +
-        '\n    <Style>' +
-        '\n      <PolyStyle><color>' + color + '</color><fill>1</fill><outline>1</outline></PolyStyle>' +
-        '\n      <LineStyle><color>ffffffff</color><width>1.5</width></LineStyle>' +
-        '\n    </Style>' +
-        '\n    <Polygon>' +
-        '\n      <extrude>0</extrude><altitudeMode>clampToGround</altitudeMode>' +
-        '\n      <outerBoundaryIs><LinearRing><coordinates>' + coordStr + '</coordinates></LinearRing></outerBoundaryIs>' +
-        '\n    </Polygon>' +
-        '\n  </Placemark>';
+      const descHtml = '<![CDATA[' + inner + ']]>';
+      const coordStr = f.rings[0].map(([lat,lng]) => lng+','+lat+',0').join(' ');
+      const color = isF ? 'cc6e5f9f' : hasPhotos(f.id) ? 'cc38b8e0' : 'cc3a5ce0';
+      placemarks += '\n  <Placemark>'
+        + '\n    <n>Manzana ' + f.num + '</n>'
+        + '\n    <description>' + descHtml + '</description>'
+        + '\n    <Style>'
+        + '\n      <PolyStyle><color>' + color + '</color><fill>1</fill><outline>1</outline></PolyStyle>'
+        + '\n      <LineStyle><color>ffffffff</color><width>1.5</width></LineStyle>'
+        + '\n    </Style>'
+        + '\n    <Polygon>'
+        + '\n      <extrude>0</extrude><altitudeMode>clampToGround</altitudeMode>'
+        + '\n      <outerBoundaryIs><LinearRing><coordinates>' + coordStr + '</coordinates></LinearRing></outerBoundaryIs>'
+        + '\n    </Polygon>'
+        + '\n  </Placemark>';
     }
-
-    const kml = '<?xml version="1.0" encoding="UTF-8"?>' +
-      '\n<kml xmlns="http://www.opengis.net/kml/2.2">' +
-      '\n<Document>' +
-      '\n  <n>Registro Catastral</n>' +
-      '\n  <description>Manzanas con registro fotografico georreferenciado</description>' +
-      placemarks +
-      '\n</Document>\n</kml>';
-
+    const kml = '<?xml version="1.0" encoding="UTF-8"?>'
+      + '\n<kml xmlns="http://www.opengis.net/kml/2.2">'
+      + '\n<Document>'
+      + '\n  <n>Registro Catastral</n>'
+      + '\n  <description>Manzanas con registro fotografico georreferenciado</description>'
+      + placemarks
+      + '\n</Document>\n</kml>';
     zip.file('doc.kml', kml);
-    const blob = await zip.generateAsync({type:'blob', compression:'DEFLATE', compressionOptions:{level:5}});
-    const url = URL.createObjectURL(blob);
-    const a   = document.createElement('a');
+    const content = await zip.generateAsync({type:'blob'});
+    const url = URL.createObjectURL(content);
+    const a = document.createElement('a');
     a.href=url; a.download='registro_catastral.kmz'; a.click();
     URL.revokeObjectURL(url);
-
-    btn.textContent='\u2b07 Exportar KMZ'; btn.disabled=false;
+    btn.textContent='\u2b07 KMZ (pol\u00edgonos)'; btn.disabled=false;
   } catch(e) {
     alert('Error generando KMZ: ' + e.message);
     btn.textContent='\u2b07 Exportar KMZ'; btn.disabled=false;
@@ -788,12 +765,13 @@ function resetApp() {
   location.reload();
 }
 
-function openLightbox(corner,idx) {
-  const ph=(photos[currentId][corner]||[])[idx]; if(!ph) return;
-  document.getElementById('lb-img').src=ph.dataUrl;
-  const f=features.find(x=>x.id===currentId);
-  const names={'top-left':'Superior Izquierda','top-right':'Superior Derecha','bottom-left':'Inferior Izquierda','bottom-right':'Inferior Derecha'};
-  document.getElementById('lb-caption').textContent=`Manzana ${f.num} — ${names[corner]} · Foto ${idx+1}`;
+function openLightboxByIndex(idx) {
+  const pList = photos[currentId] || [];
+  const ph = pList[idx]; if (!ph) return;
+  document.getElementById('lb-img').src = ph.dataUrl;
+  const f = features.find(x => x.id === currentId);
+  document.getElementById('lb-caption').textContent =
+    'Manzana ' + f.num + ' — Foto ' + (idx+1) + ' · ' + ph.lat.toFixed(5) + ', ' + ph.lng.toFixed(5);
   document.getElementById('lightbox').classList.add('show');
 }
 function closeLightbox() { document.getElementById('lightbox').classList.remove('show'); }
@@ -805,15 +783,11 @@ document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeLightbox(); }
 async function exportHTML() {
   const btn = document.getElementById('btn-html');
   btn.textContent = '⏳ Generando...'; btn.disabled = true;
-
   try {
     const fecha = new Date().toLocaleDateString('es-CO', {day:'2-digit',month:'long',year:'numeric'});
-    const totalFin = features.filter(f => finished[f.id]).length;
-    const totalFotos = features.reduce((s,f) => {
-      return s + Object.values(photos[f.id]||{}).reduce((ss,a)=>ss+a.length,0);
-    }, 0);
+    const totalFin   = features.filter(f => finished[f.id]).length;
+    const totalFotos = Object.values(photos).reduce((s, a) => s + (a||[]).length, 0);
 
-    // ── Thumbnail helper: resize to JPEG 500px for the report ──
     const toThumb = (dataUrl) => new Promise(res => {
       const img = new Image();
       img.onload = () => {
@@ -827,87 +801,62 @@ async function exportHTML() {
       img.src = dataUrl;
     });
 
-    // ── Build manzana cards HTML ──
     let cardsHtml = '';
     for (const f of features) {
-      const p   = photos[f.id] || {};
-      const isF = !!finished[f.id];
-      const allPhotos = [];
-      CORNERS.forEach(c => (p[c]||[]).forEach((ph,i) => allPhotos.push({corner:c, idx:i, ph})));
-      if (!allPhotos.length) continue;
-
-      const total = allPhotos.length;
+      const pList = photos[f.id] || [];
+      if (!pList.length) continue;
+      const isF  = !!finished[f.id];
+      const total = pList.length;
       const badge = isF
         ? '<span style="background:#2d1f5e;color:#b09ef5;border:1px solid #7c5fe6;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:700">✓ FINALIZADA</span>'
-        : `<span style="background:#1e2a1a;color:#60c080;border:1px solid #3ab87a;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:700">${total} FOTO${total>1?'S':''}</span>`;
+        : '<span style="background:#1e2a1a;color:#60c080;border:1px solid #3ab87a;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:700">' + total + ' FOTO' + (total>1?'S':'') + '</span>';
 
       let photosHtml = '';
-      for (const {corner, idx, ph} of allPhotos) {
+      for (let idx = 0; idx < pList.length; idx++) {
+        const ph = pList[idx];
         const thumb = await toThumb(ph.dataUrl);
-        const label = CLABELS[corner];
+        const coordLabel = ph.lat.toFixed(5) + ', ' + ph.lng.toFixed(5);
         photosHtml += '<div style="break-inside:avoid;display:inline-block;width:calc(50% - 8px);margin:4px;vertical-align:top">'
-          + '<img src="' + thumb + '" data-full="' + thumb + '" data-label="Manzana ' + f.num + ' \u2014 ' + label + ' \xb7 Foto ' + (idx+1) + '"'
+          + '<img src="' + thumb + '" data-full="' + thumb + '" data-label="Manzana ' + f.num + ' — Foto ' + (idx+1) + '"'
           + ' onclick="openReportLightbox(this)"'
-          + ' style="width:100%;border-radius:6px;display:block;border:1px solid #2a2f44;cursor:zoom-in" alt="' + label + '">'
-          + '<div style="font-size:10px;color:#7a7f94;text-align:center;margin-top:4px;font-family:monospace;text-transform:uppercase;letter-spacing:0.08em">' + label + ' \xb7 Foto ' + (idx+1) + '</div>'
+          + ' style="width:100%;border-radius:6px;display:block;border:1px solid #2a2f44;cursor:zoom-in" alt="Foto">'
+          + '<div style="font-size:10px;color:#7a7f94;text-align:center;margin-top:4px;font-family:monospace;text-transform:uppercase;letter-spacing:0.08em">Foto ' + (idx+1) + ' · ' + coordLabel + '</div>'
           + '</div>';
       }
 
-      const coordStr = f.centroid ? `${f.centroid[0].toFixed(5)}, ${f.centroid[1].toFixed(5)}` : '';
-      cardsHtml += `
-        <div style="background:#181c27;border:1px solid #2a2f44;border-radius:10px;padding:16px;margin-bottom:16px;page-break-inside:avoid">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid #2a2f44">
-            <span style="font-size:18px;font-weight:800;letter-spacing:-0.02em">Manzana <span style="color:#e05c3a">${f.num}</span></span>
-            ${f.name !== String(f.num) ? `<span style="font-size:11px;color:#7a7f94;font-family:monospace">${f.name}</span>` : ''}
-            ${badge}
-            ${coordStr ? `<span style="margin-left:auto;font-size:10px;color:#7a7f94;font-family:monospace">${coordStr}</span>` : ''}
-          </div>
-          <div style="font-size:0">${photosHtml}</div>
-        </div>`;
+      const coordStr = f.centroid ? f.centroid[0].toFixed(5) + ', ' + f.centroid[1].toFixed(5) : '';
+      cardsHtml += '<div style="background:#181c27;border:1px solid #2a2f44;border-radius:10px;padding:16px;margin-bottom:16px;page-break-inside:avoid">'
+        + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid #2a2f44">'
+        + '<span style="font-size:18px;font-weight:800;letter-spacing:-0.02em">Manzana <span style="color:#e05c3a">' + f.num + '</span></span>'
+        + (f.name !== String(f.num) ? '<span style="font-size:11px;color:#7a7f94;font-family:monospace">' + f.name + '</span>' : '')
+        + badge
+        + (coordStr ? '<span style="margin-left:auto;font-size:10px;color:#7a7f94;font-family:monospace">' + coordStr + '</span>' : '')
+        + '</div>'
+        + '<div style="font-size:0">' + photosHtml + '</div>'
+        + '</div>';
     }
 
     if (!cardsHtml) { alert('No hay manzanas con fotos para exportar.'); btn.textContent='⬇ Reporte HTML'; btn.disabled=false; return; }
 
-    // ── Leaflet map snapshot hint + static map div ──
-    // We embed Leaflet in the report so the user can see the map too
-    const allCoords = features.flatMap(f => f.rings.flat());
-    const latMin = Math.min(...allCoords.map(c=>c[0]));
-    const latMax = Math.max(...allCoords.map(c=>c[0]));
-    const lngMin = Math.min(...allCoords.map(c=>c[1]));
-    const lngMax = Math.max(...allCoords.map(c=>c[1]));
-    const centerLat = (latMin+latMax)/2;
-    const centerLng = (lngMin+lngMax)/2;
-
-    // Serialize features for the report map
+    // Map data
     const featuresJson = JSON.stringify(features.map(f=>({
       num: f.num, name: f.name, rings: f.rings,
-      hasPhotos: Object.values(photos[f.id]||{}).some(a=>a.length>0),
+      hasPhotos: hasPhotos(f.id),
       finished: !!finished[f.id]
     })));
 
-    // Serialize corner photo counts for markers in report map
-    const markersJson = JSON.stringify(features.map(f => {
-      const p = photos[f.id] || {};
-      const ring = f.rings[0];
-      const lats = ring.map(pt => pt[0]);
-      const lngs = ring.map(pt => pt[1]);
-      const mnLat = Math.min(...lats), mxLat = Math.max(...lats);
-      const mnLng = Math.min(...lngs), mxLng = Math.max(...lngs);
-      const corners = {};
-      CORNERS.forEach(c => {
-        const off = { 'top-left':[0.15,0.15],'top-right':[0.15,0.85],'bottom-left':[0.85,0.15],'bottom-right':[0.85,0.85] }[c];
-        corners[c] = {
-          count: (p[c]||[]).length,
-          lat: mnLat + (mxLat - mnLat) * off[0],
-          lng: mnLng + (mxLng - mnLng) * off[1],
-          color: { 'top-left':'#60c0ff','top-right':'#f5c842','bottom-left':'#e05c3a','bottom-right':'#3ab87a' }[c],
-          label: { 'top-left':'\u2196 Sup Izq','top-right':'\u2197 Sup Der','bottom-left':'\u2199 Inf Izq','bottom-right':'\u2198 Inf Der' }[c]
-        };
-      });
-      return { num: f.num, corners };
-    }));
+    // Markers for report map: one per photo with exact coords
+    const markersJson = JSON.stringify(
+      features.flatMap(f =>
+        (photos[f.id]||[]).map((ph, idx) => ({
+          num: f.num, idx: idx+1,
+          lat: ph.lat, lng: ph.lng
+        }))
+      )
+    );
 
-    const cntFotos = features.filter(f=>Object.values(photos[f.id]||{}).some(a=>a.length>0)).length;
+    const cntFotos = features.filter(f => hasPhotos(f.id)).length;
+
     const mapScript = [
       '(function(){',
       '  var map = L.map("report-map");',
@@ -920,40 +869,33 @@ async function exportHTML() {
       '  features.forEach(function(f){',
       '    f.rings.forEach(function(ring){',
       '      var color = f.finished ? "#7c5fe6" : f.hasPhotos ? "#e0b83a" : "#e05c3a";',
-      '      var poly = L.polygon(ring,{color:color,weight:1.5,fillColor:color,fillOpacity:0.3}).addTo(map);',
-      '      poly.bindTooltip("Manzana "+f.num,{direction:"top"});',
+      '      L.polygon(ring,{color:color,weight:1.5,fillColor:color,fillOpacity:0.3})',
+      '       .bindTooltip("Manzana "+f.num,{direction:"top"}).addTo(map);',
       '      allLatLngs = allLatLngs.concat(ring);',
       '    });',
       '  });',
-      '  // Draw corner photo markers',
-      '  markers.forEach(function(mz){',
-      '    Object.keys(mz.corners).forEach(function(c){',
-      '      var cd = mz.corners[c];',
-      '      if(cd.count === 0) return;',
-      '      var svg = \'<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">\'',
-      '        + \'<circle cx="9" cy="9" r="7" fill="\'+cd.color+\'" stroke="#0f1117" stroke-width="2.5"/>\'',
-      '        + \'<circle cx="9" cy="9" r="2.5" fill="#0f1117" opacity="0.6"/></svg>\';',
-      '      var icon = L.divIcon({html:svg,className:"",iconSize:[18,18],iconAnchor:[9,9]});',
-      '      var label = "Manzana "+mz.num+" \u2014 "+cd.label+" \u00b7 "+cd.count+" foto"+(cd.count>1?"s":"");',
-      '      L.marker([cd.lat,cd.lng],{icon:icon}).bindTooltip(label,{direction:"top"}).addTo(map);',
-      '    });',
+      '  var svg = \'<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">\'',
+      '    + \'<circle cx="8" cy="8" r="6" fill="#ffffff" stroke="#0f1117" stroke-width="2.5"/>\'',
+      '    + \'<circle cx="8" cy="8" r="2.5" fill="#0f1117" opacity="0.7"/></svg>\';',
+      '  var icon = L.divIcon({html:svg,className:"",iconSize:[16,16],iconAnchor:[8,8]});',
+      '  markers.forEach(function(m){',
+      '    L.marker([m.lat,m.lng],{icon:icon})',
+      '     .bindTooltip("Manzana "+m.num+" \u2014 Foto "+m.idx,{direction:"top"}).addTo(map);',
       '  });',
       '  if(allLatLngs.length) map.fitBounds(L.latLngBounds(allLatLngs),{padding:[20,20]});',
       '})();',
       '',
-      '// Report lightbox',
       'function openReportLightbox(img){',
-      '  var lb = document.getElementById("r-lightbox");',
-      '  document.getElementById("r-lb-img").src = img.dataset.full || img.src;',
-      '  document.getElementById("r-lb-cap").textContent = img.dataset.label || "";',
-      '  lb.style.display = "flex";',
-      '  document.body.style.overflow = "hidden";',
+      '  var lb=document.getElementById("r-lightbox");',
+      '  document.getElementById("r-lb-img").src=img.dataset.full||img.src;',
+      '  document.getElementById("r-lb-cap").textContent=img.dataset.label||"";',
+      '  lb.style.display="flex"; document.body.style.overflow="hidden";',
       '}',
       'function closeReportLightbox(){',
-      '  document.getElementById("r-lightbox").style.display = "none";',
-      '  document.body.style.overflow = "";',
+      '  document.getElementById("r-lightbox").style.display="none";',
+      '  document.body.style.overflow="";',
       '}',
-      'document.addEventListener("keydown",function(e){ if(e.key==="Escape") closeReportLightbox(); });'
+      'document.addEventListener("keydown",function(e){if(e.key==="Escape")closeReportLightbox();});'
     ].join('\n');
 
     const parts = [];
@@ -985,9 +927,7 @@ async function exportHTML() {
     parts.push('</style></head><body>');
     parts.push('<div id="r-lightbox" onclick="if(event.target===this)closeReportLightbox()">');
     parts.push('<button id="r-lb-close" onclick="closeReportLightbox()">&#x2715;</button>');
-    parts.push('<img id="r-lb-img" src="" alt="">');
-    parts.push('<p id="r-lb-cap"></p>');
-    parts.push('</div>');
+    parts.push('<img id="r-lb-img" src="" alt=""><p id="r-lb-cap"></p></div>');
     parts.push('<h1>Registro <span>Catastral</span></h1>');
     parts.push('<p class="meta">Generado el ' + fecha + ' &nbsp;&middot;&nbsp; ' + features.length + ' manzanas totales</p>');
     parts.push('<div class="stats">');
@@ -1008,7 +948,6 @@ async function exportHTML() {
     const a    = document.createElement('a');
     a.href=url; a.download='reporte_catastral.html'; a.click();
     URL.revokeObjectURL(url);
-
     btn.textContent = '⬇ Reporte HTML'; btn.disabled = false;
   } catch(e) {
     alert('Error generando reporte: ' + e.message);
