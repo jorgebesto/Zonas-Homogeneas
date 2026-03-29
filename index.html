@@ -243,6 +243,45 @@ body { background:var(--bg); color:var(--text); font-family:"Segoe UI",system-ui
 #lb-close { position:absolute; top:1rem; right:1rem; background:var(--surface); border:1px solid var(--border); color:var(--text); width:36px; height:36px; border-radius:50%; font-size:1rem; cursor:pointer; display:flex; align-items:center; justify-content:center; }
 #lb-caption { font-family:"Courier New",monospace; font-size:0.6rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.1em; }
 
+
+/* Pin-placement mode */
+#map-wrap.pin-mode { cursor:crosshair; }
+#map-wrap.pin-mode #map { cursor:crosshair; }
+#pin-banner {
+  display:none; position:absolute; top:10px; left:50%; transform:translateX(-50%);
+  z-index:1000; background:#e05c3a; color:white;
+  font-family:"Courier New",monospace; font-size:0.65rem; font-weight:700;
+  text-transform:uppercase; letter-spacing:0.08em;
+  padding:0.45rem 1rem; border-radius:20px;
+  white-space:nowrap; box-shadow:0 2px 12px rgba(0,0,0,0.5);
+  pointer-events:none;
+}
+#pin-cancel {
+  display:none; position:absolute; top:10px; right:10px;
+  z-index:1000; background:#1e2333; color:#e8e4dc;
+  font-family:"Courier New",monospace; font-size:0.6rem; font-weight:700;
+  text-transform:uppercase; letter-spacing:0.08em;
+  padding:0.4rem 0.8rem; border-radius:8px; border:1px solid #2a2f44;
+  cursor:pointer; pointer-events:auto;
+}
+#pin-cancel:hover { border-color:var(--accent); color:var(--accent); }
+
+/* Photo list in panel (replaces corner-grid) */
+.photo-list { display:flex; flex-direction:column; gap:0.4rem; margin-bottom:0.8rem; }
+.photo-item {
+  display:flex; align-items:center; gap:0.5rem;
+  background:var(--surface2); border:1px solid var(--border); border-radius:7px;
+  padding:0.35rem 0.5rem; overflow:hidden;
+}
+.photo-item img { width:42px; height:42px; object-fit:cover; border-radius:4px; flex-shrink:0; cursor:zoom-in; }
+.photo-item-info { flex:1; min-width:0; }
+.photo-item-coord { font-family:"Courier New",monospace; font-size:0.52rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.photo-item-name  { font-family:"Courier New",monospace; font-size:0.5rem; color:var(--muted); opacity:0.6; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.photo-item-rm { flex-shrink:0; width:22px; height:22px; border-radius:50%; background:rgba(192,57,43,0.8); border:none; color:white; font-size:0.55rem; cursor:pointer; display:flex; align-items:center; justify-content:center; }
+.photo-item-rm:hover { background:rgba(192,57,43,1); }
+.btn-pin { background:var(--accent); color:white; }
+.btn-pin:hover { background:#c94e2e; }
+.btn-pin.active { background:#e0b83a; color:#0f1117; box-shadow:0 0 10px rgba(224,184,58,0.4); }
 /* Leaflet custom polygon styles */
 .lf-empty    { fill:#e05c3a; fill-opacity:0.25; stroke:#e05c3a; stroke-width:1.5; }
 .lf-partial  { fill:#e0b83a; fill-opacity:0.30; stroke:#e0b83a; stroke-width:1.5; }
@@ -322,6 +361,8 @@ body { background:var(--bg); color:var(--text); font-family:"Segoe UI",system-ui
 
   <div id="map-wrap">
     <div id="map"></div>
+    <div id="pin-banner">📍 Toca el punto exacto en el mapa</div>
+    <button id="pin-cancel" onclick="cancelPinMode()">✕ Cancelar</button>
   </div>
 
   <!-- Sliding bottom panel -->
@@ -348,9 +389,10 @@ body { background:var(--bg); color:var(--text); font-family:"Segoe UI",system-ui
           <span>✅</span><span>Manzana finalizada</span>
           <button class="btn-unfinish" onclick="unfinishManzana()">Reabrir</button>
         </div>
-        <p class="photo-meta">Fotos: <span id="mz-photo-count">0</span> · Esquinas: <span id="mz-corner-count">0</span>/4</p>
-        <div class="corner-grid" id="corner-grid"></div>
+        <p class="photo-meta">Fotos: <span id="mz-photo-count">0</span></p>
+        <div class="photo-list" id="photo-list"></div>
         <div class="panel-actions">
+          <button class="btn btn-pin" id="btn-pin" onclick="enterPinMode()">📍 Agregar foto</button>
           <button class="btn btn-dl" id="btn-dl" onclick="downloadPhotos()" style="display:none">⬇ Descargar</button>
           <button class="btn btn-ghost" onclick="clearManzana()">🗑 Limpiar</button>
           <button class="btn btn-finish" id="btn-finish" onclick="finishManzana()">✓ Finalizar</button>
