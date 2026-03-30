@@ -82,6 +82,9 @@ function lanzarAppConLicencia() {
 
 // Verificar sesión guardada al cargar
 window.addEventListener('DOMContentLoaded', () => {
+  // Botón verificar
+  document.getElementById('lic-btn').addEventListener('click', verificarLicencia);
+
   // Enter para verificar
   document.getElementById('lic-input').addEventListener('keydown', e => {
     if (e.key === 'Enter') verificarLicencia();
