@@ -23,6 +23,51 @@
 html, body { height:100%; overflow:hidden; }
 body { background:var(--bg); color:var(--text); font-family:"Segoe UI",system-ui,sans-serif; display:flex; flex-direction:column; }
 
+/* ── LICENSE SCREEN ── */
+#license-screen {
+  flex:1; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; gap:1.5rem; padding:2rem;
+}
+#license-screen.hide { display:none; }
+.lic-logo { font-size:2.5rem; text-align:center; }
+.lic-title { font-size:clamp(1.4rem,4vw,2rem); font-weight:800; letter-spacing:-0.03em; text-align:center; }
+.lic-title span { color:var(--accent); }
+.lic-sub { font-family:"Courier New",monospace; font-size:0.65rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.1em; text-align:center; }
+.lic-box {
+  width:min(420px,100%); background:var(--surface); border:1px solid var(--border);
+  border-radius:16px; padding:2rem; display:flex; flex-direction:column; gap:1rem;
+}
+.lic-box label { font-family:"Courier New",monospace; font-size:0.6rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.1em; }
+.lic-input {
+  width:100%; background:var(--surface2); border:1px solid var(--border); border-radius:8px;
+  color:var(--text); font-family:"Courier New",monospace; font-size:1rem; font-weight:700;
+  padding:0.75rem 1rem; letter-spacing:0.05em; text-transform:uppercase; outline:none;
+  transition:border-color 0.2s;
+}
+.lic-input:focus { border-color:var(--accent); }
+.lic-input::placeholder { color:var(--muted); font-weight:400; text-transform:none; }
+.lic-btn {
+  width:100%; padding:0.85rem; border-radius:10px; border:none; cursor:pointer;
+  background:var(--accent); color:white; font-family:"Courier New",monospace;
+  font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.1em;
+  transition:opacity 0.15s;
+}
+.lic-btn:hover:not(:disabled) { opacity:0.85; }
+.lic-btn:disabled { opacity:0.4; cursor:not-allowed; }
+.lic-error {
+  font-family:"Courier New",monospace; font-size:0.62rem; color:#e07060;
+  text-align:center; padding:0.5rem; background:rgba(224,92,58,0.1);
+  border:1px solid rgba(224,92,58,0.3); border-radius:6px; display:none;
+}
+.lic-error.show { display:block; }
+.lic-ok {
+  font-family:"Courier New",monospace; font-size:0.62rem; color:var(--done);
+  text-align:center; padding:0.5rem; background:rgba(58,184,122,0.1);
+  border:1px solid rgba(58,184,122,0.3); border-radius:6px; display:none;
+}
+.lic-ok.show { display:block; }
+.lic-footer { font-family:"Courier New",monospace; font-size:0.55rem; color:var(--muted); text-align:center; line-height:1.8; }
+
 /* ── UPLOAD SCREEN ── */
 #upload-screen {
   flex:1; display:flex; flex-direction:column;
@@ -326,9 +371,30 @@ body { background:var(--bg); color:var(--text); font-family:"Segoe UI",system-ui
 <body>
 
 <!-- ══════════════════════════════
+     LICENSE SCREEN
+══════════════════════════════ -->
+<div id="license-screen">
+  <div class="lic-logo">🗺️</div>
+  <div>
+    <h1 class="lic-title">Registro <span>Catastral</span></h1>
+    <p class="lic-sub">Ingresa tu código de licencia para continuar</p>
+  </div>
+  <div class="lic-box">
+    <div>
+      <label>Código de licencia</label>
+      <input class="lic-input" id="lic-input" type="text" placeholder="EST-001" maxlength="30" autocomplete="off" autocapitalize="characters" spellcheck="false">
+    </div>
+    <div class="lic-error" id="lic-error"></div>
+    <div class="lic-ok" id="lic-ok"></div>
+    <button class="lic-btn" id="lic-btn" onclick="verificarLicencia()">Verificar licencia</button>
+  </div>
+  <p class="lic-footer">¿No tienes código? Contacta al administrador<br>del programa para obtener tu licencia.</p>
+</div>
+
+<!-- ══════════════════════════════
      UPLOAD SCREEN
 ══════════════════════════════ -->
-<div id="upload-screen">
+<div id="upload-screen" style="display:none">
   <div class="hero">
     <h1>Registro <span>Catastral</span> Georreferenciado</h1>
     <p>Sube tu archivo geográfico para comenzar<br>Las manzanas se dibujarán automáticamente en el mapa</p>
