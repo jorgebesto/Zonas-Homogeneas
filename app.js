@@ -78,6 +78,8 @@ function mostrarErrorLic(msg) {
 function lanzarAppConLicencia() {
   document.getElementById('license-screen').classList.add('hide');
   document.getElementById('upload-screen').style.display = 'flex';
+  // Verificar si hay sesión guardada
+  verificarSesionGuardada();
 }
 
 // Verificar sesión guardada al cargar
@@ -315,6 +317,102 @@ function parseWKB(view, offset) {
     geom={type:'MultiPoint',coordinates:pts};
   }
   return {geom, offset};
+}
+
+// ═══════════════════════════════════════════════════
+//  AUTOSAVE — IndexedDB (sin límite de tamaño)
+// ═══════════════════════════════════════════════════
+const DB_NAME    = 'catastral_autosave';
+const DB_VERSION = 1;
+const STORE_NAME = 'sesion';
+let   db         = null;
+
+function abrirDB() {
+  return new Promise((res, rej) => {
+    if (db) return res(db);
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = e => {
+      e.target.result.createObjectStore(STORE_NAME, { keyPath: 'id' });
+    };
+    req.onsuccess = e => { db = e.target.result; res(db); };
+    req.onerror   = () => rej(req.error);
+  });
+}
+
+async function guardarSesion() {
+  if (!features.length) return;
+  try {
+    const d = await abrirDB();
+    const sesion = {
+      id:        'sesion_actual',
+      ts:        new Date().toISOString(),
+      features:  features,
+      photos:    photos,
+      finished:  finished
+    };
+    const tx = d.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(sesion);
+  } catch(e) { console.warn('Autoguardado falló:', e); }
+}
+
+async function cargarSesionGuardada() {
+  try {
+    const d = await abrirDB();
+    return new Promise((res) => {
+      const tx  = d.transaction(STORE_NAME, 'readonly');
+      const req = tx.objectStore(STORE_NAME).get('sesion_actual');
+      req.onsuccess = () => res(req.result || null);
+      req.onerror   = () => res(null);
+    });
+  } catch(e) { return null; }
+}
+
+async function borrarSesionGuardada() {
+  try {
+    const d = await abrirDB();
+    const tx = d.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).delete('sesion_actual');
+  } catch(e) {}
+}
+
+async function verificarSesionGuardada() {
+  const sesion = await cargarSesionGuardada();
+  if (!sesion || !sesion.features || !sesion.features.length) return;
+
+  const ts      = new Date(sesion.ts);
+  const fecha   = ts.toLocaleDateString('es-CO', { day:'2-digit', month:'long', year:'numeric' });
+  const hora    = ts.toLocaleTimeString('es-CO', { hour:'2-digit', minute:'2-digit' });
+  const nFotos  = Object.values(sesion.photos || {}).reduce((s,a) => s + (a||[]).length, 0);
+  const nManz   = sesion.features.length;
+  const nFin    = Object.values(sesion.finished || {}).filter(Boolean).length;
+
+  const recuperar = confirm(
+    '📂 Hay una sesión guardada\n\n' +
+    '📅 ' + fecha + ' a las ' + hora + '\n' +
+    '🗺️  ' + nManz + ' manzanas · ' + nFotos + ' fotos · ' + nFin + ' finalizadas\n\n' +
+    '¿Deseas continuar donde lo dejaste?'
+  );
+
+  if (recuperar) {
+    features  = sesion.features;
+    photos    = sesion.photos   || {};
+    finished  = sesion.finished || {};
+    // Inicializar arrays faltantes
+    features.forEach(f => {
+      if (!photos[f.id])   photos[f.id]   = [];
+      if (finished[f.id] === undefined) finished[f.id] = false;
+    });
+    launchApp();
+    // Actualizar estilos de polígonos según estado guardado
+    setTimeout(() => {
+      features.forEach(f => updatePolygonStyle(f.id));
+      updateProgress();
+      // Restaurar marcadores de fotos
+      features.forEach(f => syncPhotoMarkers(f.id));
+    }, 500);
+  } else {
+    borrarSesionGuardada();
+  }
 }
 
 // ═══════════════════════════════════════════════════
@@ -668,6 +766,7 @@ function renderPanelContent() {
   updatePolygonStyle(id);
   updateProgress();
   syncPhotoMarkers(id);
+  guardarSesion();
 }
 
 // ═══════════════════════════════════════════════════
@@ -1001,6 +1100,7 @@ function resetProc() {
 }
 function resetApp() {
   if(!confirm('¿Volver al inicio? Se perderán los datos.')) return;
+  borrarSesionGuardada();
   location.reload();
 }
 
@@ -1188,6 +1288,13 @@ async function exportHTML() {
     a.href=url; a.download='reporte_catastral.html'; a.click();
     URL.revokeObjectURL(url);
     btn.textContent = '⬇ Reporte HTML'; btn.disabled = false;
+
+    // Ofrecer limpiar la sesión guardada
+    setTimeout(() => {
+      if (confirm('✅ Reporte generado.\n\n¿Deseas limpiar el progreso guardado para empezar una nueva sesión?')) {
+        borrarSesionGuardada();
+      }
+    }, 500);
   } catch(e) {
     alert('Error generando reporte: ' + e.message);
     btn.textContent = '⬇ Reporte HTML'; btn.disabled = false;
