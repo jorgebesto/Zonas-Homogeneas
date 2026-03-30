@@ -101,16 +101,9 @@ window.addEventListener('DOMContentLoaded', () => {
     // Si la licencia ya venció localmente, pedir código de nuevo
     if (hoy > vence) { localStorage.removeItem('catastral_licencia'); return; }
 
-    const validadoEn  = new Date(ses.validadoEn);
-    const horasDesde  = (new Date() - validadoEn) / 3600000;
-
-    if (horasDesde < 24) {
-      // Acceso directo sin consultar Supabase
-      lanzarAppConLicencia();
-    } else {
-      // Re-verificar contra Supabase cada 24h
-      reVerificarLicencia(ses.codigo);
-    }
+    // Siempre re-verificar contra Supabase al abrir la app
+    // Si no hay conexión, se deja pasar con la sesión guardada
+    reVerificarLicencia(ses.codigo);
   } catch(e) {
     localStorage.removeItem('catastral_licencia');
   }
@@ -119,24 +112,36 @@ window.addEventListener('DOMContentLoaded', () => {
 async function reVerificarLicencia(codigo) {
   try {
     const res = await fetch(
-      SUPA_URL + '/rest/v1/licencias?codigo=eq.' + encodeURIComponent(codigo) + '&select=activo,fecha_vencimiento',
+      SUPA_URL + '/rest/v1/licencias?codigo=eq.' + encodeURIComponent(codigo) + '&select=activo,fecha_vencimiento,nombre',
       { headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY } }
     );
     const data = await res.json();
+
+    // Licencia desactivada o no existe
     if (!data.length || !data[0].activo) {
-      localStorage.removeItem('catastral_licencia'); return;
+      localStorage.removeItem('catastral_licencia');
+      mostrarErrorLic('Tu licencia ha sido desactivada. Contacta al administrador.');
+      return;
     }
+
+    // Licencia vencida
     const hoy   = new Date(); hoy.setHours(0,0,0,0);
     const vence = new Date(data[0].fecha_vencimiento + 'T00:00:00');
-    if (hoy > vence) { localStorage.removeItem('catastral_licencia'); return; }
+    if (hoy > vence) {
+      localStorage.removeItem('catastral_licencia');
+      const fechaStr = vence.toLocaleDateString('es-CO', {day:'2-digit', month:'long', year:'numeric'});
+      mostrarErrorLic('Tu licencia venció el ' + fechaStr + '. Contacta al administrador.');
+      return;
+    }
 
-    // Actualizar timestamp
+    // Todo OK — actualizar timestamp y entrar
     const ses = JSON.parse(localStorage.getItem('catastral_licencia'));
     ses.validadoEn = new Date().toISOString();
     localStorage.setItem('catastral_licencia', JSON.stringify(ses));
     lanzarAppConLicencia();
+
   } catch(e) {
-    // Si falla la conexión pero tiene sesión válida, dejar pasar
+    // Sin conexión — dejar pasar con sesión guardada
     lanzarAppConLicencia();
   }
 }
