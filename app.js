@@ -1,4 +1,144 @@
 // ═══════════════════════════════════════════════════
+//  LICENCIAS — Supabase
+// ═══════════════════════════════════════════════════
+const SUPA_URL = 'https://cknkscsglejyccwqkiys.supabase.co';
+const SUPA_KEY = 'sb_publishable_SFZipClEOvaP0Xi8T2Sw7w_kpBBTBeD';
+
+async function verificarLicencia() {
+  const input = document.getElementById('lic-input');
+  const btn   = document.getElementById('lic-btn');
+  const err   = document.getElementById('lic-error');
+  const ok    = document.getElementById('lic-ok');
+  const codigo = input.value.trim().toUpperCase();
+
+  if (!codigo) { mostrarErrorLic('Ingresa tu código de licencia.'); return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Verificando...';
+  err.classList.remove('show');
+  ok.classList.remove('show');
+
+  try {
+    const res = await fetch(
+      SUPA_URL + '/rest/v1/licencias?codigo=eq.' + encodeURIComponent(codigo) + '&select=*',
+      { headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY } }
+    );
+
+    if (!res.ok) throw new Error('Error de conexión (' + res.status + ')');
+    const data = await res.json();
+
+    if (!data.length) {
+      mostrarErrorLic('Código no encontrado. Verifica e intenta de nuevo.');
+      btn.disabled = false; btn.textContent = 'Verificar licencia'; return;
+    }
+
+    const lic = data[0];
+
+    if (!lic.activo) {
+      mostrarErrorLic('Esta licencia ha sido desactivada. Contacta al administrador.');
+      btn.disabled = false; btn.textContent = 'Verificar licencia'; return;
+    }
+
+    const hoy   = new Date(); hoy.setHours(0,0,0,0);
+    const vence = new Date(lic.fecha_vencimiento + 'T00:00:00');
+    if (hoy > vence) {
+      const fechaStr = vence.toLocaleDateString('es-CO', {day:'2-digit', month:'long', year:'numeric'});
+      mostrarErrorLic('Licencia vencida el ' + fechaStr + '. Contacta al administrador.');
+      btn.disabled = false; btn.textContent = 'Verificar licencia'; return;
+    }
+
+    // Calcular días restantes
+    const diasRestantes = Math.ceil((vence - hoy) / 86400000);
+    const fechaStr = vence.toLocaleDateString('es-CO', {day:'2-digit', month:'long', year:'numeric'});
+
+    // Guardar sesión en localStorage
+    localStorage.setItem('catastral_licencia', JSON.stringify({
+      codigo: lic.codigo,
+      nombre: lic.nombre || '',
+      vence:  lic.fecha_vencimiento,
+      validadoEn: new Date().toISOString()
+    }));
+
+    ok.textContent = '✓ Bienvenido' + (lic.nombre ? ', ' + lic.nombre : '') + ' — Licencia válida hasta ' + fechaStr + ' (' + diasRestantes + ' días)';
+    ok.classList.add('show');
+
+    setTimeout(() => lanzarAppConLicencia(), 1200);
+
+  } catch(e) {
+    mostrarErrorLic('Error de conexión. Verifica tu internet e intenta de nuevo.');
+    btn.disabled = false; btn.textContent = 'Verificar licencia';
+  }
+}
+
+function mostrarErrorLic(msg) {
+  const err = document.getElementById('lic-error');
+  err.textContent = msg; err.classList.add('show');
+}
+
+function lanzarAppConLicencia() {
+  document.getElementById('license-screen').classList.add('hide');
+  document.getElementById('upload-screen').style.display = 'flex';
+}
+
+// Verificar sesión guardada al cargar
+window.addEventListener('DOMContentLoaded', () => {
+  // Enter para verificar
+  document.getElementById('lic-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') verificarLicencia();
+  });
+
+  const sesionGuardada = localStorage.getItem('catastral_licencia');
+  if (!sesionGuardada) return;
+
+  try {
+    const ses = JSON.parse(sesionGuardada);
+    const hoy   = new Date(); hoy.setHours(0,0,0,0);
+    const vence = new Date(ses.vence + 'T00:00:00');
+
+    // Si la licencia ya venció localmente, pedir código de nuevo
+    if (hoy > vence) { localStorage.removeItem('catastral_licencia'); return; }
+
+    const validadoEn  = new Date(ses.validadoEn);
+    const horasDesde  = (new Date() - validadoEn) / 3600000;
+
+    if (horasDesde < 24) {
+      // Acceso directo sin consultar Supabase
+      lanzarAppConLicencia();
+    } else {
+      // Re-verificar contra Supabase cada 24h
+      reVerificarLicencia(ses.codigo);
+    }
+  } catch(e) {
+    localStorage.removeItem('catastral_licencia');
+  }
+});
+
+async function reVerificarLicencia(codigo) {
+  try {
+    const res = await fetch(
+      SUPA_URL + '/rest/v1/licencias?codigo=eq.' + encodeURIComponent(codigo) + '&select=activo,fecha_vencimiento',
+      { headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY } }
+    );
+    const data = await res.json();
+    if (!data.length || !data[0].activo) {
+      localStorage.removeItem('catastral_licencia'); return;
+    }
+    const hoy   = new Date(); hoy.setHours(0,0,0,0);
+    const vence = new Date(data[0].fecha_vencimiento + 'T00:00:00');
+    if (hoy > vence) { localStorage.removeItem('catastral_licencia'); return; }
+
+    // Actualizar timestamp
+    const ses = JSON.parse(localStorage.getItem('catastral_licencia'));
+    ses.validadoEn = new Date().toISOString();
+    localStorage.setItem('catastral_licencia', JSON.stringify(ses));
+    lanzarAppConLicencia();
+  } catch(e) {
+    // Si falla la conexión pero tiene sesión válida, dejar pasar
+    lanzarAppConLicencia();
+  }
+}
+
+// ═══════════════════════════════════════════════════
 //  STATE
 // ═══════════════════════════════════════════════════
 let features    = [];   // [{id, name, coords[[lat,lng]], centroid, props}]
