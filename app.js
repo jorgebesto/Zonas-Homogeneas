@@ -2,7 +2,7 @@
 //  LICENCIAS — Supabase
 // ═══════════════════════════════════════════════════
 const SUPA_URL = 'https://cknkscsglejyccwqkiys.supabase.co';
-const SUPA_KEY = 'sb_publishable_SFZipClEOvaP0Xi8T2Sw7w_kpBBTBeD';
+const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNrbmtzY3NnbGVqeWNjd3FraXlzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4MTk3ODQsImV4cCI6MjA5MDM5NTc4NH0.V3eYDnFJHhT4ALNKo66yCr1gwUtzsZtQ_ftToQDx48Y';
 
 async function verificarLicencia() {
   const input = document.getElementById('lic-input');
